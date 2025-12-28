@@ -1,0 +1,22 @@
+# DolphinScheduler Workflow Monitor Dependencies
+
+# HTTP client
+requests>=2.28.0
+
+# Configuration management
+pyyaml>=6.0
+
+# CLI interface
+click>=8.1.0
+
+# Scheduling
+schedule>=1.2.0
+
+# Colored terminal output
+colorama>=0.4.6
+
+# Environment variable support
+python-dotenv>=1.0.0
+
+# JSON schema validation
+jsonschema>=4.17.0

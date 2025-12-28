@@ -1,0 +1,69 @@
+# DolphinScheduler 工作流监控配置文件
+
+# DolphinScheduler API 配置
+dolphinscheduler:
+  # API 地址
+  api_url: "http://localhost:12345/dolphinscheduler"
+  # 认证 Token (可通过环境变量 DS_TOKEN 覆盖)
+  token: ""
+
+# 监控配置
+monitor:
+  # 检查间隔（秒）
+  check_interval: 60
+  # 是否启用持续监控模式
+  continuous_mode: true
+  # 单次检查模式下的超时时间（秒）
+  timeout: 300
+
+# 重试配置
+retry:
+  # 最大自动恢复次数（针对同一个工作流实例）
+  max_recovery_attempts: 3
+  # 恢复操作间隔（秒）
+  recovery_interval: 30
+  # 是否启用自动恢复
+  auto_recovery: true
+
+# 需要监控的项目和工作流配置
+# 格式：项目名称 -> 工作流列表（为空则监控该项目下所有工作流）
+projects:
+  # 示例配置
+  # my_project:
+  #   workflows:
+  #     - workflow_name_1
+  #     - workflow_name_2
+  #   # 是否监控所有工作流（如果为 true，则忽略 workflows 列表）
+  #   monitor_all: false
+
+  # 默认示例项目
+  default_project:
+    workflows: []
+    monitor_all: true
+
+# 日志配置
+logging:
+  # 日志级别: DEBUG, INFO, WARNING, ERROR
+  level: INFO
+  # 日志文件路径（相对于项目根目录）
+  file: logs/monitor.log
+  # 日志文件最大大小（MB）
+  max_size: 10
+  # 保留的日志文件数量
+  backup_count: 5
+
+# 通知配置（可选）
+notification:
+  # 是否启用通知
+  enabled: false
+  # 通知类型: webhook, email
+  type: webhook
+  # Webhook URL
+  webhook_url: ""
+  # 邮件配置
+  email:
+    smtp_server: ""
+    smtp_port: 587
+    username: ""
+    password: ""
+    recipients: []

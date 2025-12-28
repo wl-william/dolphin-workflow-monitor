@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  dolphin-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dolphin-workflow-monitor
+    restart: unless-stopped
+    environment:
+      # DolphinScheduler API 配置
+      - DS_API_URL=${DS_API_URL:-http://dolphinscheduler:12345/dolphinscheduler}
+      - DS_TOKEN=${DS_TOKEN}
+
+      # 监控配置
+      - DS_CHECK_INTERVAL=${DS_CHECK_INTERVAL:-60}
+      - DS_CONTINUOUS_MODE=${DS_CONTINUOUS_MODE:-true}
+
+      # 恢复配置
+      - DS_AUTO_RECOVERY=${DS_AUTO_RECOVERY:-true}
+      - DS_MAX_RECOVERY_ATTEMPTS=${DS_MAX_RECOVERY_ATTEMPTS:-3}
+
+      # 日志级别
+      - DS_LOG_LEVEL=${DS_LOG_LEVEL:-INFO}
+    volumes:
+      # 挂载配置文件
+      - ./config:/app/config:ro
+      # 持久化日志
+      - ./logs:/app/logs
+    networks:
+      - dolphin-network
+    # 如果 DolphinScheduler 也是 Docker 部署，可以添加依赖
+    # depends_on:
+    #   - dolphinscheduler
+
+networks:
+  dolphin-network:
+    driver: bridge
+    # 如果需要连接到已有的 DolphinScheduler 网络
+    # external: true
+    # name: dolphinscheduler_default
