@@ -407,9 +407,22 @@ class DolphinSchedulerClient:
         )
 
         if not result['success'] or not result['data']:
+            self.logger.warning(
+                f"获取任务列表失败 - 项目:{project_code}, 实例:{process_instance_id}, "
+                f"原因: {result.get('msg', '无数据')}"
+            )
             return []
 
-        records = result['data'].get('totalList', [])
+        # DolphinScheduler 3.1.x 返回格式: data.taskList
+        # 旧版本返回格式: data.totalList
+        records = result['data'].get('taskList', result['data'].get('totalList', []))
+
+        if not records:
+            self.logger.debug(
+                f"工作流实例 {process_instance_id} 没有任务记录 "
+                f"(状态: {result['data'].get('processInstanceState', 'unknown')})"
+            )
+
         return [
             TaskInstance(
                 id=t.get('id'),

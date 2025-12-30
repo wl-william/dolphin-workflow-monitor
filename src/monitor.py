@@ -27,8 +27,11 @@ class MonitorStats:
     failed_workflows_found: int = 0
     recovery_attempts: int = 0
     successful_recoveries: int = 0
+    skipped_due_to_threshold: int = 0  # 因超过阈值而跳过恢复的数量
     last_check_time: Optional[str] = None
     errors: List[str] = field(default_factory=list)
+    # 24小时内失败工作流统计（按项目和工作流分组）
+    workflow_failure_stats: Dict[str, Dict[str, int]] = field(default_factory=dict)  # {project_name: {workflow_name: count}}
 
 
 @dataclass
@@ -205,17 +208,33 @@ class WorkflowMonitor:
         self.logger.debug(f"检查项目: {monitored.config.name}")
 
         # 获取失败的工作流实例
+        # 注意：只获取配置的工作流，不处理未配置的工作流
         if monitored.config.monitor_all:
-            # 监控所有工作流
+            # 监控所有工作流（获取项目下所有失败工作流）
+            self.logger.debug(f"项目 {monitored.config.name} 配置为监控所有工作流")
             failed_instances = self.client.get_failed_workflow_instances(project_code)
         else:
             # 只监控指定的工作流
+            if not monitored.workflow_codes:
+                self.logger.warning(
+                    f"项目 {monitored.config.name} 未配置具体工作流且 monitor_all=false，"
+                    f"将不会监控任何工作流"
+                )
+                return results
+
+            self.logger.debug(
+                f"项目 {monitored.config.name} 配置监控 {len(monitored.workflow_codes)} 个工作流"
+            )
             failed_instances = []
             for wf_name, wf_code in monitored.workflow_codes.items():
                 instances = self.client.get_failed_workflow_instances(
                     project_code,
                     process_definition_code=wf_code
                 )
+                if instances:
+                    self.logger.debug(
+                        f"  - 工作流 [{wf_name}] (code:{wf_code}): {len(instances)} 个失败实例"
+                    )
                 failed_instances.extend(instances)
 
         if not failed_instances:
@@ -241,13 +260,70 @@ class WorkflowMonitor:
             return results
 
         self.logger.info(
-            f"项目 {monitored.config.name} 中发现 {len(recent_failed)} 个失败的工作流"
+            f"项目 {monitored.config.name} 中发现 {len(recent_failed)} 个失败的工作流实例"
             f"（{time_window_hours}小时内启动）"
         )
         self.stats.failed_workflows_found += len(recent_failed)
 
-        # 处理每个失败的工作流（只处理24小时内的）
-        for instance in recent_failed:
+        # 按工作流定义分组（同一个工作流的多个失败实例）
+        from collections import defaultdict
+        workflow_groups = defaultdict(list)
+        for wf in recent_failed:
+            workflow_groups[wf.process_definition_code].append(wf)
+
+        # 输出统计信息并记录到全局统计
+        project_name = monitored.config.name
+        if project_name not in self.stats.workflow_failure_stats:
+            self.stats.workflow_failure_stats[project_name] = {}
+
+        self.logger.info(f"失败工作流统计（按工作流定义分组）:")
+        for def_code, instances in workflow_groups.items():
+            wf_name = instances[0].name.rsplit('-', 1)[0] if instances else "未知"
+            self.logger.info(
+                f"  - [{wf_name}] (定义码:{def_code}): {len(instances)} 个失败实例"
+            )
+            # 记录到统计
+            self.stats.workflow_failure_stats[project_name][wf_name] = len(instances)
+
+        # 新逻辑：针对每个工作流定义，检查失败实例数量
+        max_failures_threshold = self.config.monitor.max_failures_for_recovery
+        workflows_to_recover = []
+        workflows_to_notify_only = []
+
+        for def_code, instances in workflow_groups.items():
+            if len(instances) > max_failures_threshold:
+                # 超过阈值，只通知不恢复
+                workflows_to_notify_only.extend(instances)
+                self.stats.skipped_due_to_threshold += len(instances)
+                wf_name = instances[0].name.rsplit('-', 1)[0]
+                self.logger.warning(
+                    f"⚠️  工作流 [{wf_name}] 在 {time_window_hours} 小时内有 {len(instances)} 个实例失败，"
+                    f"超过阈值({max_failures_threshold}个)，只通知不恢复"
+                )
+            else:
+                # 未超过阈值，可以恢复
+                workflows_to_recover.extend(instances)
+
+        # 输出超过阈值的工作流详情
+        if workflows_to_notify_only:
+            self.logger.warning(f"超过阈值的失败工作流实例列表（只通知不恢复）:")
+            for i, wf in enumerate(workflows_to_notify_only, 1):
+                self.logger.warning(
+                    f"  {i}. {wf.name} (ID:{wf.id}, 启动时间:{wf.start_time})"
+                )
+
+            # 触发失败检测回调（用于发送通知）
+            if self._on_failure_detected:
+                for instance in workflows_to_notify_only:
+                    self._on_failure_detected(instance)
+
+        # 处理未超过阈值的失败工作流
+        if workflows_to_recover:
+            self.logger.info(
+                f"将尝试恢复 {len(workflows_to_recover)} 个工作流实例"
+            )
+
+        for instance in workflows_to_recover:
             # 触发失败检测回调
             if self._on_failure_detected:
                 self._on_failure_detected(instance)
@@ -357,10 +433,22 @@ class WorkflowMonitor:
         self.logger.info(f"开始时间: {self.stats.start_time}")
         self.logger.info(f"结束时间: {datetime.now().isoformat()}")
         self.logger.info(f"检查次数: {self.stats.check_count}")
-        self.logger.info(f"发现失败工作流: {self.stats.failed_workflows_found}")
+        self.logger.info(f"发现失败工作流实例: {self.stats.failed_workflows_found}")
+        self.logger.info(f"因超过阈值跳过: {self.stats.skipped_due_to_threshold}")
         self.logger.info(f"恢复尝试: {self.stats.recovery_attempts}")
         self.logger.info(f"恢复成功: {self.stats.successful_recoveries}")
+
+        # 输出24小时内失败工作流统计
+        if self.stats.workflow_failure_stats:
+            self.logger.info("-" * 60)
+            self.logger.info("24小时内失败工作流统计（按项目和工作流分组）:")
+            for project_name, workflows in self.stats.workflow_failure_stats.items():
+                self.logger.info(f"  项目: {project_name}")
+                for workflow_name, count in workflows.items():
+                    self.logger.info(f"    - {workflow_name}: {count} 个失败实例")
+
         if self.stats.errors:
+            self.logger.info("-" * 60)
             self.logger.info(f"错误数量: {len(self.stats.errors)}")
         self.logger.info("=" * 60)
 
@@ -372,9 +460,11 @@ class WorkflowMonitor:
                 'start_time': self.stats.start_time,
                 'check_count': self.stats.check_count,
                 'failed_workflows_found': self.stats.failed_workflows_found,
+                'skipped_due_to_threshold': self.stats.skipped_due_to_threshold,
                 'recovery_attempts': self.stats.recovery_attempts,
                 'successful_recoveries': self.stats.successful_recoveries,
-                'last_check_time': self.stats.last_check_time
+                'last_check_time': self.stats.last_check_time,
+                'workflow_failure_stats': self.stats.workflow_failure_stats
             },
             'monitored_projects': [
                 {

@@ -27,6 +27,7 @@ class MonitorConfig:
     continuous_mode: bool = True
     timeout: int = 300
     time_window_hours: int = 24  # 只监控指定小时内启动的工作流
+    max_failures_for_recovery: int = 1  # 时间窗口内最多失败数量，超过则只通知不恢复
 
 
 @dataclass
@@ -114,12 +115,14 @@ class Config:
         check_interval = self._get_env('DS_CHECK_INTERVAL')
         continuous_mode = self._get_env('DS_CONTINUOUS_MODE')
         time_window_hours = self._get_env('DS_TIME_WINDOW_HOURS')
+        max_failures = self._get_env('DS_MAX_FAILURES_FOR_RECOVERY')
 
         return MonitorConfig(
             check_interval=int(check_interval) if check_interval else mon_config.get('check_interval', 60),
             continuous_mode=continuous_mode.lower() == 'true' if continuous_mode else mon_config.get('continuous_mode', True),
             timeout=mon_config.get('timeout', 300),
-            time_window_hours=int(time_window_hours) if time_window_hours else mon_config.get('time_window_hours', 24)
+            time_window_hours=int(time_window_hours) if time_window_hours else mon_config.get('time_window_hours', 24),
+            max_failures_for_recovery=int(max_failures) if max_failures else mon_config.get('max_failures_for_recovery', 1)
         )
 
     def _parse_retry_config(self) -> RetryConfig:
@@ -174,7 +177,8 @@ class Config:
                 'check_interval': self.monitor.check_interval,
                 'continuous_mode': self.monitor.continuous_mode,
                 'timeout': self.monitor.timeout,
-                'time_window_hours': self.monitor.time_window_hours
+                'time_window_hours': self.monitor.time_window_hours,
+                'max_failures_for_recovery': self.monitor.max_failures_for_recovery
             },
             'retry': {
                 'max_recovery_attempts': self.retry.max_recovery_attempts,
