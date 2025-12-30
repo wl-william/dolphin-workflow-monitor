@@ -168,6 +168,28 @@ class WorkflowMonitor:
 
         return results
 
+    def _extract_workflow_name(self, workflow_instance_name: str) -> str:
+        """
+        从工作流实例名称中提取工作流名称
+
+        工作流实例名称格式示例：
+        - 新加坡日任务调度-8-20251230023001444
+        - 数据ETL-20251230120000
+
+        Args:
+            workflow_instance_name: 工作流实例名称
+
+        Returns:
+            工作流名称（移除时间戳和运行次数）
+        """
+        import re
+        # 移除末尾的-加时间戳（例如：-20251230023001444）
+        wf_name = re.sub(r'-\d{14,20}$', '', workflow_instance_name)
+        # 如果还有-加数字-时间戳，可能是运行次数（例如：-8-时间戳），也移除
+        wf_name = re.sub(r'-\d+-\d{14,20}$', '', workflow_instance_name)
+        # 如果全部被移除，使用原名称
+        return wf_name if wf_name else workflow_instance_name
+
     def _is_within_time_window(self, workflow: WorkflowInstance, hours: int = 24) -> bool:
         """
         检查工作流是否在指定时间窗口内
@@ -265,10 +287,21 @@ class WorkflowMonitor:
         )
         self.stats.failed_workflows_found += len(recent_failed)
 
-        # 按工作流定义分组（同一个工作流的多个失败实例）
+        # ============================================================
+        # 失败阈值判断逻辑
+        # ============================================================
+        # 1. 统计的是：工作流实例（WorkflowInstance）的失败次数
+        # 2. 不统计：工作流内部的子工作流和任务失败数
+        # 3. 分组依据：process_definition_code（工作流定义编码）
+        #    - 同一个工作流定义的所有失败实例归为一组
+        #    - 例如："数据ETL" 工作流在24小时内失败了3次，就是3个实例
+        # 4. 时间范围：只统计24小时内启动的工作流实例
+        # ============================================================
         from collections import defaultdict
         workflow_groups = defaultdict(list)
         for wf in recent_failed:
+            # wf 是 WorkflowInstance 对象（工作流实例）
+            # 按工作流定义编码分组
             workflow_groups[wf.process_definition_code].append(wf)
 
         # 输出统计信息并记录到全局统计
@@ -278,31 +311,54 @@ class WorkflowMonitor:
 
         self.logger.info(f"失败工作流统计（按工作流定义分组）:")
         for def_code, instances in workflow_groups.items():
-            wf_name = instances[0].name.rsplit('-', 1)[0] if instances else "未知"
+            # 提取工作流名称
+            wf_name = self._extract_workflow_name(instances[0].name) if instances else "未知"
+
             self.logger.info(
                 f"  - [{wf_name}] (定义码:{def_code}): {len(instances)} 个失败实例"
             )
             # 记录到统计
             self.stats.workflow_failure_stats[project_name][wf_name] = len(instances)
 
-        # 新逻辑：针对每个工作流定义，检查失败实例数量
+        # ============================================================
+        # 阈值判断：针对每个工作流定义，独立检查失败实例数量
+        # ============================================================
+        # 判断逻辑：
+        # - 统计同一个工作流定义在24小时内的失败实例数量
+        # - 如果失败实例数量 > 阈值 → 只通知不恢复
+        # - 如果失败实例数量 <= 阈值 → 可以尝试恢复
+        #
+        # 示例：
+        #   工作流A: 3个失败实例 > 阈值(1) → 只通知
+        #   工作流B: 1个失败实例 <= 阈值(1) → 尝试恢复
+        #   工作流C: 1个失败实例 <= 阈值(1) → 尝试恢复
+        # ============================================================
         max_failures_threshold = self.config.monitor.max_failures_for_recovery
         workflows_to_recover = []
         workflows_to_notify_only = []
 
         for def_code, instances in workflow_groups.items():
-            if len(instances) > max_failures_threshold:
-                # 超过阈值，只通知不恢复
+            # 提取工作流名称
+            wf_name = self._extract_workflow_name(instances[0].name) if instances else "未知"
+
+            # 判断该工作流定义的失败实例数量是否超过阈值
+            failure_count = len(instances)  # 该工作流定义的失败实例数量
+
+            if failure_count > max_failures_threshold:
+                # 超过阈值：该工作流短时间内多次失败，只通知不恢复
                 workflows_to_notify_only.extend(instances)
                 self.stats.skipped_due_to_threshold += len(instances)
-                wf_name = instances[0].name.rsplit('-', 1)[0]
                 self.logger.warning(
-                    f"⚠️  工作流 [{wf_name}] 在 {time_window_hours} 小时内有 {len(instances)} 个实例失败，"
+                    f"⚠️  工作流 [{wf_name}] 在 {time_window_hours} 小时内有 {failure_count} 个实例失败，"
                     f"超过阈值({max_failures_threshold}个)，只通知不恢复"
                 )
             else:
-                # 未超过阈值，可以恢复
+                # 未超过阈值：可以尝试自动恢复
                 workflows_to_recover.extend(instances)
+                self.logger.debug(
+                    f"工作流 [{wf_name}] 失败 {failure_count} 个实例，"
+                    f"未超过阈值({max_failures_threshold})，将尝试恢复"
+                )
 
         # 输出超过阈值的工作流详情
         if workflows_to_notify_only:
