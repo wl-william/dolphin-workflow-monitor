@@ -8,7 +8,7 @@ import time
 import signal
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Callable
 from threading import Event
 
@@ -165,6 +165,30 @@ class WorkflowMonitor:
 
         return results
 
+    def _is_within_time_window(self, workflow: WorkflowInstance, hours: int = 24) -> bool:
+        """
+        检查工作流是否在指定时间窗口内
+
+        Args:
+            workflow: 工作流实例
+            hours: 时间窗口（小时）
+
+        Returns:
+            是否在时间窗口内
+        """
+        if not workflow.start_time:
+            return False
+
+        try:
+            # 解析启动时间（DolphinScheduler 格式: "2025-12-30 07:09:24"）
+            start_time = datetime.strptime(workflow.start_time, "%Y-%m-%d %H:%M:%S")
+            time_threshold = datetime.now() - timedelta(hours=hours)
+
+            return start_time >= time_threshold
+        except (ValueError, TypeError) as e:
+            self.logger.warning(f"无法解析工作流 {workflow.name} 的启动时间: {workflow.start_time}")
+            return False
+
     def _check_project(self, monitored: MonitoredProject) -> List[RecoveryResult]:
         """
         检查单个项目
@@ -198,13 +222,32 @@ class WorkflowMonitor:
             self.logger.debug(f"项目 {monitored.config.name} 中没有失败的工作流")
             return results
 
-        self.logger.info(
-            f"项目 {monitored.config.name} 中发现 {len(failed_instances)} 个失败的工作流"
-        )
-        self.stats.failed_workflows_found += len(failed_instances)
+        # 过滤：只保留配置时间窗口内启动的工作流
+        time_window_hours = self.config.monitor.time_window_hours
+        recent_failed = [
+            wf for wf in failed_instances
+            if self._is_within_time_window(wf, time_window_hours)
+        ]
 
-        # 处理每个失败的工作流
-        for instance in failed_instances:
+        # 统计被过滤的数量（启动时间超过24小时的不记录日志）
+        filtered_count = len(failed_instances) - len(recent_failed)
+
+        if not recent_failed:
+            if filtered_count > 0:
+                self.logger.debug(
+                    f"项目 {monitored.config.name} 中有 {filtered_count} 个失败工作流，"
+                    f"但启动时间都超过 {time_window_hours} 小时，已忽略"
+                )
+            return results
+
+        self.logger.info(
+            f"项目 {monitored.config.name} 中发现 {len(recent_failed)} 个失败的工作流"
+            f"（{time_window_hours}小时内启动）"
+        )
+        self.stats.failed_workflows_found += len(recent_failed)
+
+        # 处理每个失败的工作流（只处理24小时内的）
+        for instance in recent_failed:
             # 触发失败检测回调
             if self._on_failure_detected:
                 self._on_failure_detected(instance)

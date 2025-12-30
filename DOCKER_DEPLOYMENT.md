@@ -1,20 +1,38 @@
 # Docker 部署指南
 
-本文档提供解决 Docker 部署中权限问题的完整方案。
+本文档提供解决 Docker 部署中常见问题的完整方案。
 
 ## ❌ 常见错误
+
+### 1. 权限错误
 
 ```
 PermissionError: [Errno 13] Permission denied: '/app/logs/monitor.log'
 ```
 
+### 2. 网络连接错误
+
+```
+requests.exceptions.ConnectionError: Failed to establish a connection to eu.bigdata.master3
+```
+
 ## 🔍 问题原因
+
+### 权限问题原因
 
 Docker 容器内的用户权限与宿主机目录权限不匹配：
 
 - **容器内**: `monitor` 用户 (UID:1000, GID:1000)
 - **宿主机**: `./logs` 目录可能由 root 或其他用户创建
 - **结果**: 容器内用户无法写入宿主机目录
+
+### 网络连接问题原因
+
+Docker 容器无法解析或连接外部主机名：
+
+- **问题**: 容器内无法解析 `eu.bigdata.master3` 主机名
+- **原因**: Docker 容器默认使用自己的 DNS，可能无法解析内网主机名
+- **解决**: 需要配置 `extra_hosts` 进行主机名映射
 
 ---
 
@@ -258,7 +276,82 @@ sudo mkdir -p /path/to/project/logs
 sudo chown -R YOUR_USER:YOUR_GROUP /path/to/project/logs
 ```
 
-### 问题 3: SELinux 阻止访问
+### 问题 3: 无法连接到 DolphinScheduler 服务器
+
+**错误**:
+```
+ConnectionError: Failed to establish a connection to eu.bigdata.master3
+```
+
+**原因**: Docker 容器无法解析主机名 `eu.bigdata.master3`
+
+**解决方案**: 配置 Host 映射
+
+#### 步骤 1: 获取 DolphinScheduler 服务器 IP
+
+```bash
+# 方法 1: 如果 DolphinScheduler 在宿主机上
+# 获取宿主机 IP（从容器角度）
+ip route show default | awk '/default/ {print $3}'
+# 通常输出: 172.17.0.1
+
+# 方法 2: 如果 DolphinScheduler 在其他服务器
+# 使用 ping 或 nslookup 获取 IP
+ping eu.bigdata.master3
+# 或
+nslookup eu.bigdata.master3
+```
+
+#### 步骤 2: 配置环境变量
+
+编辑 `.env` 文件：
+
+```bash
+# DolphinScheduler 服务器 IP
+DS_HOST_IP=192.168.1.100  # 替换为实际 IP
+```
+
+#### 步骤 3: 验证配置
+
+`docker-compose.yaml` 中已配置 `extra_hosts`：
+
+```yaml
+extra_hosts:
+  - "eu.bigdata.master3:${DS_HOST_IP:-172.17.0.1}"
+```
+
+#### 步骤 4: 重启服务
+
+```bash
+docker-compose down
+docker-compose up -d
+```
+
+#### 步骤 5: 验证主机名解析
+
+```bash
+# 进入容器
+docker-compose exec dolphin-monitor bash
+
+# 测试主机名解析
+ping -c 3 eu.bigdata.master3
+
+# 测试连接
+curl http://eu.bigdata.master3:12345/dolphinscheduler
+```
+
+#### 添加多个主机映射
+
+如果需要映射多个主机，编辑 `docker-compose.yaml`：
+
+```yaml
+extra_hosts:
+  - "eu.bigdata.master3:192.168.1.100"
+  - "another.host:192.168.1.101"
+  - "third.host:192.168.1.102"
+```
+
+### 问题 4: SELinux 阻止访问
 
 如果在 CentOS/RHEL 等系统上遇到 SELinux 问题：
 

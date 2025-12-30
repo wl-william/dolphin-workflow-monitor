@@ -31,6 +31,14 @@ services:
       - ./config:/app/config:ro
       # 持久化日志
       - ./logs:/app/logs
+
+    # Host 映射配置（用于访问宿主机或外部服务器）
+    extra_hosts:
+      # DolphinScheduler 服务器地址映射
+      - "eu.bigdata.master3:${DS_HOST_IP:-172.17.0.1}"
+      # 如有其他服务器，在此添加
+      # - "another.host:192.168.1.100"
+
     networks:
       - dolphin-network
     # 如果 DolphinScheduler 也是 Docker 部署，可以添加依赖

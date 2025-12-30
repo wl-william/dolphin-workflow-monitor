@@ -56,10 +56,18 @@ cd dolphin-workflow-monitor
 2. **配置环境变量**
 ```bash
 cp .env.example .env
-# 编辑 .env 文件，配置必要参数
-# 重要：添加 USER_ID 和 GROUP_ID 避免权限问题
+
+# 配置用户权限（避免权限问题）
 echo "USER_ID=$(id -u)" >> .env
 echo "GROUP_ID=$(id -g)" >> .env
+
+# 配置 DolphinScheduler 服务器 IP（用于主机名映射）
+# 如果 DolphinScheduler 在宿主机: 使用 172.17.0.1
+# 如果在其他服务器: 使用实际 IP
+echo "DS_HOST_IP=172.17.0.1" >> .env
+
+# 编辑 .env 文件，填写 DS_TOKEN 等其他必要参数
+nano .env
 ```
 
 3. **启动服务**
@@ -106,9 +114,11 @@ python main.py run
 | `DS_CONTINUOUS_MODE` | 持续监控模式 | `true` |
 | `DS_AUTO_RECOVERY` | 自动恢复开关 | `true` |
 | `DS_MAX_RECOVERY_ATTEMPTS` | 最大恢复次数 | `3` |
+| `DS_TIME_WINDOW_HOURS` | 时间窗口（小时）- 只监控指定时间内启动的工作流 | `24` |
 | `DS_LOG_LEVEL` | 日志级别 | `INFO` |
 | `USER_ID` | Docker 容器用户 ID（解决权限问题） | `1000` |
 | `GROUP_ID` | Docker 容器用户组 ID（解决权限问题） | `1000` |
+| `DS_HOST_IP` | DolphinScheduler 服务器 IP（Docker host 映射） | `172.17.0.1` |
 
 ### 配置文件
 
@@ -323,6 +333,37 @@ sudo bash scripts/setup-logs.sh
 ### Q: 如何在需要 sudo 权限的机器上部署？
 
 参考 [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md) 中的方案 2（自定义用户 UID/GID）或方案 3（使用命名卷），这两种方案都不需要 sudo 权限。
+
+### Q: Docker 容器无法连接到 DolphinScheduler (eu.bigdata.master3)？
+
+**错误**: `ConnectionError: Failed to establish a connection to eu.bigdata.master3`
+
+**原因**: Docker 容器无法解析主机名
+
+**解决**:
+
+1. 获取 DolphinScheduler 服务器 IP：
+```bash
+# 如果在宿主机，使用
+ip route show default | awk '/default/ {print $3}'
+# 通常是 172.17.0.1
+
+# 如果在其他服务器
+ping eu.bigdata.master3
+```
+
+2. 配置 `.env` 文件：
+```bash
+DS_HOST_IP=192.168.1.100  # 替换为实际 IP
+```
+
+3. 重启容器：
+```bash
+docker-compose down
+docker-compose up -d
+```
+
+详细说明请查看 [DOCKER_DEPLOYMENT.md - 问题3](DOCKER_DEPLOYMENT.md#问题-3-无法连接到-dolphinscheduler-服务器)
 
 ## 文档
 
