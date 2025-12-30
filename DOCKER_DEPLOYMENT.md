@@ -30,7 +30,7 @@ Docker 容器内的用户权限与宿主机目录权限不匹配：
 
 Docker 容器无法解析或连接外部主机名：
 
-- **问题**: 容器内无法解析 `eu.bigdata.master3` 主机名
+- **问题**: 容器内无法解析 `dolphinscheuler.master2.com` 主机名
 - **原因**: Docker 容器默认使用自己的 DNS，可能无法解析内网主机名
 - **解决**: 需要配置 `extra_hosts` 进行主机名映射
 
@@ -280,10 +280,10 @@ sudo chown -R YOUR_USER:YOUR_GROUP /path/to/project/logs
 
 **错误**:
 ```
-ConnectionError: Failed to establish a connection to eu.bigdata.master3
+ConnectionError: Failed to establish a connection to dolphinscheuler.master2.com
 ```
 
-**原因**: Docker 容器无法解析主机名 `eu.bigdata.master3`
+**原因**: Docker 容器无法解析主机名 `dolphinscheuler.master2.com`
 
 **解决方案**: 配置 Host 映射
 
@@ -297,9 +297,9 @@ ip route show default | awk '/default/ {print $3}'
 
 # 方法 2: 如果 DolphinScheduler 在其他服务器
 # 使用 ping 或 nslookup 获取 IP
-ping eu.bigdata.master3
+ping dolphinscheuler.master2.com
 # 或
-nslookup eu.bigdata.master3
+nslookup dolphinscheuler.master2.com
 ```
 
 #### 步骤 2: 配置环境变量
@@ -317,7 +317,7 @@ DS_HOST_IP=192.168.1.100  # 替换为实际 IP
 
 ```yaml
 extra_hosts:
-  - "eu.bigdata.master3:${DS_HOST_IP:-172.17.0.1}"
+  - "dolphinscheuler.master2.com:${DS_HOST_IP:-172.17.0.1}"
 ```
 
 #### 步骤 4: 重启服务
@@ -334,10 +334,10 @@ docker-compose up -d
 docker-compose exec dolphin-monitor bash
 
 # 测试主机名解析
-ping -c 3 eu.bigdata.master3
+ping -c 3 dolphinscheuler.master2.com
 
 # 测试连接
-curl http://eu.bigdata.master3:12345/dolphinscheduler
+curl http://dolphinscheuler.master2.com:12345/dolphinscheduler
 ```
 
 #### 添加多个主机映射

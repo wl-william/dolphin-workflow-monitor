@@ -334,9 +334,9 @@ sudo bash scripts/setup-logs.sh
 
 参考 [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md) 中的方案 2（自定义用户 UID/GID）或方案 3（使用命名卷），这两种方案都不需要 sudo 权限。
 
-### Q: Docker 容器无法连接到 DolphinScheduler (eu.bigdata.master3)？
+### Q: Docker 容器无法连接到 DolphinScheduler (dolphinscheuler.master2.com)？
 
-**错误**: `ConnectionError: Failed to establish a connection to eu.bigdata.master3`
+**错误**: `ConnectionError: Failed to establish a connection to dolphinscheuler.master2.com`
 
 **原因**: Docker 容器无法解析主机名
 
@@ -349,7 +349,7 @@ ip route show default | awk '/default/ {print $3}'
 # 通常是 172.17.0.1
 
 # 如果在其他服务器
-ping eu.bigdata.master3
+ping dolphinscheuler.master2.com
 ```
 
 2. 配置 `.env` 文件：
