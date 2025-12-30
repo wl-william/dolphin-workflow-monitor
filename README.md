@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-# dolphin-workflow-monitor
-dolphin-workflow-monitor
-=======
 # DolphinScheduler 工作流监控器
 
 自动化运维工具，用于监控和恢复 DolphinScheduler 工作流。
@@ -26,6 +22,31 @@ dolphin-workflow-monitor
 
 ### 方式一：Docker 部署（推荐）
 
+#### ⚠️ 重要：解决日志文件权限问题
+
+如果遇到权限错误 `Permission denied: '/app/logs/monitor.log'`，请查看详细解决方案：
+
+📖 **[Docker 部署权限问题完整解决方案](DOCKER_DEPLOYMENT.md)**
+
+**快速修复（3选1）**：
+
+```bash
+# 方案1: 预设目录权限（最快）
+sudo bash scripts/setup-logs.sh
+docker-compose up -d
+
+# 方案2: 自定义用户ID（推荐生产环境）
+echo "USER_ID=$(id -u)" >> .env
+echo "GROUP_ID=$(id -g)" >> .env
+docker-compose build
+docker-compose up -d
+
+# 方案3: 使用命名卷（最简单）
+docker-compose -f docker-compose.named-volume.yaml up -d
+```
+
+#### 标准部署步骤
+
 1. **克隆项目**
 ```bash
 git clone <repository-url>
@@ -36,12 +57,21 @@ cd dolphin-workflow-monitor
 ```bash
 cp .env.example .env
 # 编辑 .env 文件，配置必要参数
+# 重要：添加 USER_ID 和 GROUP_ID 避免权限问题
+echo "USER_ID=$(id -u)" >> .env
+echo "GROUP_ID=$(id -g)" >> .env
 ```
 
 3. **启动服务**
 ```bash
-chmod +x scripts/docker-start.sh
-./scripts/docker-start.sh
+# 构建镜像
+docker-compose build
+
+# 启动服务
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f
 ```
 
 ### 方式二：本地运行
@@ -77,6 +107,8 @@ python main.py run
 | `DS_AUTO_RECOVERY` | 自动恢复开关 | `true` |
 | `DS_MAX_RECOVERY_ATTEMPTS` | 最大恢复次数 | `3` |
 | `DS_LOG_LEVEL` | 日志级别 | `INFO` |
+| `USER_ID` | Docker 容器用户 ID（解决权限问题） | `1000` |
+| `GROUP_ID` | Docker 容器用户组 ID（解决权限问题） | `1000` |
 
 ### 配置文件
 
@@ -217,25 +249,28 @@ python main.py show-config
 ```
 dolphin-workflow-monitor/
 ├── config/
-│   └── config.yaml       # 配置文件
-├── logs/                  # 日志目录
+│   └── config.yaml           # 配置文件
+├── logs/                      # 日志目录
 ├── scripts/
-│   ├── start.sh          # 本地启动脚本
-│   └── docker-start.sh   # Docker 启动脚本
+│   ├── start.sh              # 本地启动脚本
+│   ├── docker-start.sh       # Docker 启动脚本
+│   └── setup-logs.sh         # 日志目录权限设置脚本
 ├── src/
 │   ├── __init__.py
-│   ├── api_client.py     # DolphinScheduler API 客户端
-│   ├── cli.py            # 命令行接口
-│   ├── config.py         # 配置管理
-│   ├── logger.py         # 日志模块
-│   ├── monitor.py        # 工作流监控器
+│   ├── api_client.py         # DolphinScheduler API 客户端
+│   ├── cli.py                # 命令行接口
+│   ├── config.py             # 配置管理
+│   ├── logger.py             # 日志模块
+│   ├── monitor.py            # 工作流监控器
 │   ├── recovery_handler.py   # 恢复处理器
 │   └── task_validator.py     # 任务验证器
-├── .env.example          # 环境变量示例
+├── .env.example              # 环境变量示例
 ├── .gitignore
-├── docker-compose.yaml   # Docker Compose 配置
+├── docker-compose.yaml       # Docker Compose 配置
+├── docker-compose.named-volume.yaml  # 使用命名卷的配置
 ├── Dockerfile
-├── main.py               # 主入口
+├── DOCKER_DEPLOYMENT.md      # Docker 部署权限问题解决方案
+├── main.py                   # 主入口
 ├── README.md
 ├── requirements.txt
 └── setup.py
@@ -257,6 +292,18 @@ curl -X POST "http://your-ds-server:12345/dolphinscheduler/login" \
 
 ## 常见问题
 
+### Q: Docker 部署遇到权限错误怎么办？
+
+**错误**：`PermissionError: [Errno 13] Permission denied: '/app/logs/monitor.log'`
+
+**解决**：查看详细文档 [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)
+
+**快速修复**：
+```bash
+# 运行权限设置脚本
+sudo bash scripts/setup-logs.sh
+```
+
 ### Q: 如何调整检查频率？
 
 修改环境变量 `DS_CHECK_INTERVAL` 或配置文件中的 `monitor.check_interval`。
@@ -273,7 +320,15 @@ curl -X POST "http://your-ds-server:12345/dolphinscheduler/login" \
 
 检查日志了解失败原因。恢复记录会保存在 `logs/recovery_state.json` 中，可以使用 `clear-records` 命令重置。
 
+### Q: 如何在需要 sudo 权限的机器上部署？
+
+参考 [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md) 中的方案 2（自定义用户 UID/GID）或方案 3（使用命名卷），这两种方案都不需要 sudo 权限。
+
+## 文档
+
+- [README.md](README.md) - 项目总览和使用指南（本文档）
+- [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md) - Docker 部署权限问题完整解决方案
+
 ## 许可证
 
 MIT License
->>>>>>> d13a1fa (first commit)

@@ -24,8 +24,15 @@ COPY main.py .
 RUN mkdir -p /app/logs
 
 # 设置非 root 用户
-RUN useradd -m -u 1000 monitor && \
-    chown -R monitor:monitor /app
+# 使用 ARG 允许自定义 UID/GID
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+RUN groupadd -g ${GROUP_ID} monitor && \
+    useradd -m -u ${USER_ID} -g ${GROUP_ID} monitor && \
+    chown -R monitor:monitor /app && \
+    chmod -R 755 /app/logs
+
 USER monitor
 
 # 健康检查

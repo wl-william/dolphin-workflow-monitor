@@ -5,10 +5,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        # 使用当前用户的 UID/GID，避免权限问题
-        USER_ID: ${USER_ID:-1000}
-        GROUP_ID: ${GROUP_ID:-1000}
     container_name: dolphin-workflow-monitor
     restart: unless-stopped
     environment:
@@ -29,17 +25,16 @@ services:
     volumes:
       # 挂载配置文件
       - ./config:/app/config:ro
-      # 持久化日志
-      - ./logs:/app/logs
+      # 使用命名卷（Docker 自动管理权限）
+      - monitor-logs:/app/logs
     networks:
       - dolphin-network
-    # 如果 DolphinScheduler 也是 Docker 部署，可以添加依赖
-    # depends_on:
-    #   - dolphinscheduler
+
+# 定义命名卷
+volumes:
+  monitor-logs:
+    driver: local
 
 networks:
   dolphin-network:
     driver: bridge
-    # 如果需要连接到已有的 DolphinScheduler 网络
-    # external: true
-    # name: dolphinscheduler_default
