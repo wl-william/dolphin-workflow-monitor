@@ -93,16 +93,28 @@ class TaskInstance:
     @property
     def is_failed(self) -> bool:
         """是否失败"""
+        # 支持字符串和整数两种格式
+        if isinstance(self.state, str):
+            return self.state.upper() in {'FAILURE', 'KILL', 'NEED_FAULT_TOLERANCE'}
         return self.state in FAILURE_STATES
 
     @property
     def is_running(self) -> bool:
         """是否运行中"""
+        # 支持字符串和整数两种格式
+        if isinstance(self.state, str):
+            return self.state.upper() in {
+                'RUNNING_EXECUTION', 'SUBMITTED_SUCCESS', 'DELAY_EXECUTION',
+                'DISPATCH', 'WAITING_THREAD', 'WAITING_DEPEND'
+            }
         return self.state in RUNNING_STATES
 
     @property
     def is_success(self) -> bool:
         """是否成功"""
+        # 支持字符串和整数两种格式
+        if isinstance(self.state, str):
+            return self.state.upper() in {'SUCCESS', 'FORCED_SUCCESS'}
         return self.state in SUCCESS_STATES
 
     @property
@@ -133,11 +145,17 @@ class WorkflowInstance:
     @property
     def is_failed(self) -> bool:
         """是否失败"""
+        # 支持字符串和整数两种格式
+        if isinstance(self.state, str):
+            return self.state.upper() == 'FAILURE'
         return self.state == WorkflowState.FAILURE.value
 
     @property
     def is_running(self) -> bool:
         """是否运行中"""
+        # 支持字符串和整数两种格式
+        if isinstance(self.state, str):
+            return self.state.upper() in {'RUNNING_EXECUTION', 'SUBMITTED_SUCCESS'}
         return self.state in {
             WorkflowState.RUNNING_EXECUTION.value,
             WorkflowState.SUBMITTED_SUCCESS.value
@@ -146,6 +164,9 @@ class WorkflowInstance:
     @property
     def is_success(self) -> bool:
         """是否成功"""
+        # 支持字符串和整数两种格式
+        if isinstance(self.state, str):
+            return self.state.upper() == 'SUCCESS'
         return self.state == WorkflowState.SUCCESS.value
 
 
