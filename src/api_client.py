@@ -5,11 +5,15 @@ DolphinScheduler API 客户端
 """
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 
 from .logger import get_logger
+from .api_cache import APICache, cached
+from .api_metrics import APIMetricsCollector, monitored
 
 
 class TaskState(Enum):
@@ -192,22 +196,61 @@ class ProcessDefinition:
 class DolphinSchedulerClient:
     """DolphinScheduler API 客户端"""
 
-    def __init__(self, api_url: str, token: str):
+    def __init__(
+        self,
+        api_url: str,
+        token: str,
+        enable_cache: bool = True,
+        enable_metrics: bool = True,
+        max_retries: int = 3,
+        pool_connections: int = 10,
+        pool_maxsize: int = 20
+    ):
         """
         初始化客户端
 
         Args:
             api_url: API 地址
             token: 认证 Token
+            enable_cache: 是否启用缓存
+            enable_metrics: 是否启用监控
+            max_retries: 最大重试次数
+            pool_connections: 连接池大小
+            pool_maxsize: 最大连接数
         """
         self.api_url = api_url.rstrip('/')
         self.token = token
         self.logger = get_logger()
+
+        # 初始化缓存和监控
+        self._cache = APICache() if enable_cache else None
+        self._metrics_collector = APIMetricsCollector() if enable_metrics else None
+
+        # 配置 Session
         self.session = requests.Session()
         self.session.headers.update({
             'token': token,
             'Content-Type': 'application/x-www-form-urlencoded'
         })
+
+        # 配置重试策略
+        retry_strategy = Retry(
+            total=max_retries,
+            backoff_factor=0.5,  # 重试间隔：0.5s, 1s, 2s...
+            status_forcelist=[429, 500, 502, 503, 504],  # 对这些状态码重试
+            allowed_methods=["GET", "POST"]  # 允许重试的方法
+        )
+
+        # 配置连接池
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=pool_connections,
+            pool_maxsize=pool_maxsize
+        )
+
+        # 挂载适配器
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
 
     def _request(
         self,
@@ -251,9 +294,11 @@ class DolphinSchedulerClient:
             self.logger.error(f"请求失败: {str(e)}")
             return {'success': False, 'data': None, 'msg': str(e)}
 
+    @cached(ttl_seconds=3600, key_prefix="projects")
+    @monitored(api_name="get_projects")
     def get_projects(self) -> List[Project]:
         """
-        获取所有项目
+        获取所有项目（缓存1小时）
 
         Returns:
             项目列表
@@ -289,6 +334,8 @@ class DolphinSchedulerClient:
                 return project
         return None
 
+    @cached(ttl_seconds=3600, key_prefix="process_definitions")
+    @monitored(api_name="get_process_definitions")
     def get_process_definitions(
         self,
         project_code: int,
@@ -296,7 +343,7 @@ class DolphinSchedulerClient:
         page_size: int = 100
     ) -> List[ProcessDefinition]:
         """
-        获取项目下的工作流定义
+        获取项目下的工作流定义（缓存1小时）
 
         Args:
             project_code: 项目编码
@@ -327,6 +374,7 @@ class DolphinSchedulerClient:
             for p in records
         ]
 
+    @monitored(api_name="get_workflow_instances")
     def get_workflow_instances(
         self,
         project_code: int,
@@ -495,6 +543,7 @@ class DolphinSchedulerClient:
             end_time=data.get('endTime')
         )
 
+    @monitored(api_name="execute_failure_recovery")
     def execute_failure_recovery(
         self,
         project_code: int,
@@ -534,3 +583,81 @@ class DolphinSchedulerClient:
         except Exception as e:
             self.logger.error(f"连接检查失败: {str(e)}")
             return False
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        获取缓存统计
+
+        Returns:
+            缓存统计信息
+        """
+        if self._cache:
+            return self._cache.get_stats()
+        return {'enabled': False}
+
+    def get_metrics_summary(self) -> Dict[str, Any]:
+        """
+        获取 API 调用统计摘要
+
+        Returns:
+            统计摘要
+        """
+        if self._metrics_collector:
+            return self._metrics_collector.get_summary()
+        return {'enabled': False}
+
+    def get_all_metrics(self) -> Dict[str, Dict[str, Any]]:
+        """
+        获取所有 API 的详细指标
+
+        Returns:
+            API 指标字典
+        """
+        if self._metrics_collector:
+            return self._metrics_collector.get_all_metrics()
+        return {'enabled': False}
+
+    def clear_cache(self) -> None:
+        """清空缓存"""
+        if self._cache:
+            self._cache.clear()
+            self.logger.info("API 缓存已清空")
+
+    def reset_metrics(self) -> None:
+        """重置监控统计"""
+        if self._metrics_collector:
+            self._metrics_collector.reset()
+            self.logger.info("API 监控统计已重置")
+
+    def print_stats(self) -> None:
+        """打印统计信息（用于调试）"""
+        if self._cache:
+            cache_stats = self.get_cache_stats()
+            self.logger.info("=" * 60)
+            self.logger.info("API 缓存统计:")
+            self.logger.info(f"  缓存大小: {cache_stats['cache_size']}")
+            self.logger.info(f"  命中次数: {cache_stats['hit_count']}")
+            self.logger.info(f"  未命中次数: {cache_stats['miss_count']}")
+            self.logger.info(f"  命中率: {cache_stats['hit_rate']}")
+
+        if self._metrics_collector:
+            metrics = self.get_metrics_summary()
+            self.logger.info("=" * 60)
+            self.logger.info("API 调用统计:")
+            self.logger.info(f"  总调用次数: {metrics['total_api_calls']}")
+            self.logger.info(f"  总错误次数: {metrics['total_errors']}")
+            self.logger.info(f"  错误率: {metrics['error_rate']}")
+            self.logger.info(f"  平均耗时: {metrics['avg_duration_ms']} ms")
+
+            if metrics.get('slowest_api'):
+                self.logger.info(
+                    f"  最慢 API: {metrics['slowest_api']['name']} "
+                    f"({metrics['slowest_api']['avg_duration_ms']} ms)"
+                )
+
+            if metrics.get('most_called_api'):
+                self.logger.info(
+                    f"  最频繁 API: {metrics['most_called_api']['name']} "
+                    f"({metrics['most_called_api']['call_count']} 次)"
+                )
+            self.logger.info("=" * 60)

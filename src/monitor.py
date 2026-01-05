@@ -583,6 +583,11 @@ class WorkflowMonitor:
         if self.stats.errors:
             self.logger.info("-" * 60)
             self.logger.info(f"错误数量: {len(self.stats.errors)}")
+
+        # 输出 API 调用统计
+        self.logger.info("")
+        self.client.print_stats()
+
         self.logger.info("=" * 60)
 
     def get_status(self) -> Dict:

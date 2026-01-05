@@ -5,6 +5,8 @@
 """
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import hmac
 import hashlib
 import base64
@@ -14,6 +16,35 @@ from typing import Optional
 
 from .base import Notifier, NotificationMessage, NotificationLevel
 from ..logger import get_logger
+
+
+def create_session_with_retry(
+    retries: int = 3,
+    backoff_factor: float = 0.5,
+    status_forcelist: tuple = (429, 500, 502, 503, 504)
+) -> requests.Session:
+    """
+    创建带重试机制的 Session
+
+    Args:
+        retries: 最大重试次数
+        backoff_factor: 重试间隔因子
+        status_forcelist: 需要重试的状态码
+
+    Returns:
+        配置好的 Session
+    """
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+        allowed_methods=["POST"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 
 class DingTalkNotifier(Notifier):
@@ -59,6 +90,8 @@ class DingTalkNotifier(Notifier):
         self.at_mobiles = at_mobiles or []
         self.at_all = at_all
         self.logger = get_logger()
+        # 创建带重试机制的 Session
+        self.session = create_session_with_retry(retries=3, backoff_factor=1.0)
 
     def get_name(self) -> str:
         """获取通知器名称"""
@@ -190,12 +223,12 @@ class DingTalkNotifier(Notifier):
                     "isAtAll": self.at_all
                 }
 
-            # 发送请求
-            response = requests.post(
+            # 发送请求（使用带重试机制的 Session）
+            response = self.session.post(
                 url,
                 json=data,
                 headers={'Content-Type': 'application/json'},
-                timeout=10
+                timeout=30  # DNS 解析可能较慢，增加超时时间
             )
 
             # 检查响应
@@ -215,6 +248,15 @@ class DingTalkNotifier(Notifier):
                 )
                 return False
 
+        except requests.exceptions.ConnectionError as e:
+            self.logger.error(
+                f"钉钉通知连接失败 (DNS解析或网络问题): {str(e)}\n"
+                f"提示: 请检查 Docker 容器的 DNS 配置，确保可以解析 oapi.dingtalk.com"
+            )
+            return False
+        except requests.exceptions.Timeout as e:
+            self.logger.error(f"钉钉通知请求超时: {str(e)}")
+            return False
         except Exception as e:
             self.logger.error(f"发送钉钉通知时出错: {str(e)}")
             return False
