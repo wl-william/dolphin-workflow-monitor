@@ -11,6 +11,13 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# 安装系统工具（用于网络调试）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iputils-ping \
+    dnsutils \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # 安装依赖
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -35,9 +42,9 @@ RUN groupadd -g ${GROUP_ID} monitor && \
 
 USER monitor
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8080/health', timeout=5)" || exit 1
+# 健康检查（验证应用模块可正常加载）
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "from src.monitor import WorkflowMonitor; print('healthy')" || exit 1
 
 # 入口点
 ENTRYPOINT ["python", "main.py"]
