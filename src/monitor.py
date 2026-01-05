@@ -17,6 +17,13 @@ from .task_validator import TaskValidator
 from .recovery_handler import RecoveryHandler, RecoveryResult
 from .config import Config, ProjectConfig
 from .logger import get_logger
+from .notifiers import create_notification_manager, NotificationManager
+from .notifiers.message_builder import (
+    build_failure_detected_message,
+    build_recovery_success_message,
+    build_recovery_failed_message,
+    build_threshold_exceeded_message
+)
 
 
 @dataclass
@@ -68,6 +75,9 @@ class WorkflowMonitor:
         self.recovery_handler = recovery_handler
         self.config = config
         self.logger = get_logger()
+
+        # 初始化通知管理器
+        self.notification_manager = create_notification_manager(config.notification)
 
         # 监控状态
         self.stats = MonitorStats()
@@ -352,6 +362,17 @@ class WorkflowMonitor:
                     f"⚠️  工作流 [{wf_name}] 在 {time_window_hours} 小时内有 {failure_count} 个实例失败，"
                     f"超过阈值({max_failures_threshold}个)，只通知不恢复"
                 )
+
+                # 发送超过阈值通知（只发一次，使用第一个实例）
+                if instances and self.notification_manager.has_notifiers():
+                    message = build_threshold_exceeded_message(
+                        workflow=instances[0],
+                        project_name=monitored.config.name,
+                        failure_count=failure_count,
+                        threshold=max_failures_threshold,
+                        time_window=time_window_hours
+                    )
+                    self.notification_manager.send(message)
             else:
                 # 未超过阈值：可以尝试自动恢复
                 workflows_to_recover.extend(instances)
@@ -396,6 +417,22 @@ class WorkflowMonitor:
                 self.stats.recovery_attempts += 1
                 if result.recovery_success:
                     self.stats.successful_recoveries += 1
+
+                    # 发送恢复成功通知
+                    if self.notification_manager.has_notifiers():
+                        message = build_recovery_success_message(
+                            result=result,
+                            project_name=monitored.config.name
+                        )
+                        self.notification_manager.send(message)
+                else:
+                    # 发送恢复失败通知
+                    if self.notification_manager.has_notifiers():
+                        message = build_recovery_failed_message(
+                            result=result,
+                            project_name=monitored.config.name
+                        )
+                        self.notification_manager.send(message)
 
                 # 触发恢复执行回调
                 if self._on_recovery_executed:

@@ -17,6 +17,11 @@
   - 不递归验证子工作流（SUB_PROCESS）
 - ✅ **从失败节点恢复**：不会重跑整个工作流
 - ✅ 智能重试机制（支持最大重试次数限制）
+- ✅ **多渠道告警通知**：
+  - 钉钉机器人通知
+  - 企业微信机器人通知
+  - 邮件通知（支持SMTP）
+  - 支持同时启用多个通知渠道
 - ✅ 持续监控模式
 - ✅ 支持多项目监控
 - ✅ 灵活的配置管理（环境变量、配置文件）
@@ -121,6 +126,19 @@ python main.py run
 | `DS_TIME_WINDOW_HOURS` | 时间窗口（小时）- 只监控指定时间内启动的工作流 | `24` |
 | `DS_MAX_FAILURES_FOR_RECOVERY` | 失败阈值 - 时间窗口内失败数超过此值只通知不恢复 | `1` |
 | `DS_LOG_LEVEL` | 日志级别 | `INFO` |
+| **通知配置（可选）** | | |
+| `DS_DINGTALK_ENABLED` | 启用钉钉通知 | `false` |
+| `DS_DINGTALK_WEBHOOK` | 钉钉机器人 Webhook URL | - |
+| `DS_DINGTALK_SECRET` | 钉钉机器人加签密钥 | - |
+| `DS_WEWORK_ENABLED` | 启用企业微信通知 | `false` |
+| `DS_WEWORK_WEBHOOK` | 企业微信机器人 Webhook URL | - |
+| `DS_EMAIL_ENABLED` | 启用邮件通知 | `false` |
+| `DS_EMAIL_SMTP_HOST` | SMTP 服务器地址 | - |
+| `DS_EMAIL_SMTP_PORT` | SMTP 服务器端口 | `465` |
+| `DS_EMAIL_USERNAME` | SMTP 用户名 | - |
+| `DS_EMAIL_PASSWORD` | SMTP 密码/授权码 | - |
+| `DS_EMAIL_FROM` | 发件人地址 | - |
+| **Docker 配置** | | |
 | `USER_ID` | Docker 容器用户 ID（解决权限问题） | `1000` |
 | `GROUP_ID` | Docker 容器用户组 ID（解决权限问题） | `1000` |
 | `DS_HOST_IP` | DolphinScheduler 服务器 IP（Docker host 映射） | `172.17.0.1` |
@@ -323,6 +341,117 @@ dolphin-workflow-monitor/
 ├── README.md
 ├── requirements.txt
 └── setup.py
+```
+
+## 通知配置
+
+监控器支持多种通知渠道，当检测到工作流失败、恢复成功/失败时会自动发送通知。
+
+### 通知场景
+
+- 🔍 **检测到工作流失败**：发现工作流状态为 FAILURE
+- ⚠️ **失败次数超过阈值**：同一工作流短时间内多次失败，暂停自动恢复
+- ✅ **工作流恢复成功**：成功从失败节点恢复工作流
+- ❌ **工作流恢复失败**：尝试恢复失败，需人工介入
+
+### 钉钉机器人配置
+
+1. **创建钉钉机器人**：
+   - 打开钉钉群 → 群设置 → 智能群助手 → 添加机器人 → 自定义
+   - 设置机器人名称和头像
+   - 安全设置选择"加签"（推荐）并保存密钥
+   - 复制 Webhook URL
+
+2. **配置方式一：通过配置文件**（`config/config.yaml`）：
+   ```yaml
+   notification:
+     dingtalk:
+       enabled: true
+       webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+       secret: "SECxxxxxxxxxxxxx"  # 可选，如果选择了加签
+       at_mobiles: []  # 可选，要@的手机号列表
+       at_all: false   # 可选，是否@所有人
+   ```
+
+3. **配置方式二：通过环境变量**（`.env`）：
+   ```bash
+   DS_DINGTALK_ENABLED=true
+   DS_DINGTALK_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=xxx
+   DS_DINGTALK_SECRET=SECxxxxxxxxxxxxx
+   ```
+
+### 企业微信机器人配置
+
+1. **创建企业微信机器人**：
+   - 打开企业微信群 → 群设置 → 群机器人 → 添加群机器人
+   - 复制 Webhook URL
+
+2. **配置方式一：通过配置文件**（`config/config.yaml`）：
+   ```yaml
+   notification:
+     wework:
+       enabled: true
+       webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+   ```
+
+3. **配置方式二：通过环境变量**（`.env`）：
+   ```bash
+   DS_WEWORK_ENABLED=true
+   DS_WEWORK_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx
+   ```
+
+### 邮件通知配置
+
+1. **获取 SMTP 信息**：
+   - **QQ邮箱**：`smtp.qq.com:465`，需要开启SMTP服务并使用授权码
+   - **163邮箱**：`smtp.163.com:465`，需要开启SMTP服务并使用授权码
+   - **Gmail**：`smtp.gmail.com:465`，需要开启两步验证并使用应用专用密码
+   - **企业邮箱**：咨询IT部门获取SMTP配置
+
+2. **配置方式一：通过配置文件**（`config/config.yaml`）：
+   ```yaml
+   notification:
+     email:
+       enabled: true
+       smtp_host: "smtp.qq.com"
+       smtp_port: 465
+       username: "your_email@qq.com"
+       password: "your_smtp_password_or_auth_code"
+       from_addr: "your_email@qq.com"
+       to_addrs:
+         - "recipient1@example.com"
+         - "recipient2@example.com"
+       use_ssl: true
+   ```
+
+3. **配置方式二：通过环境变量**（`.env`）：
+   ```bash
+   DS_EMAIL_ENABLED=true
+   DS_EMAIL_SMTP_HOST=smtp.qq.com
+   DS_EMAIL_SMTP_PORT=465
+   DS_EMAIL_USERNAME=your_email@qq.com
+   DS_EMAIL_PASSWORD=your_smtp_password
+   DS_EMAIL_FROM=your_email@qq.com
+   ```
+
+   **注意**：邮件收件人列表只能通过配置文件配置。
+
+### 同时启用多个通知渠道
+
+可以同时启用钉钉、企业微信和邮件通知，监控器会向所有已启用的渠道发送通知：
+
+```yaml
+notification:
+  dingtalk:
+    enabled: true
+    webhook_url: "..."
+  wework:
+    enabled: true
+    webhook_url: "..."
+  email:
+    enabled: true
+    smtp_host: "smtp.qq.com"
+    # ...其他配置
 ```
 
 ## 获取 DolphinScheduler Token

@@ -54,6 +54,46 @@ class DolphinConfig:
     token: str = ""
 
 
+@dataclass
+class DingTalkConfig:
+    """钉钉通知配置"""
+    enabled: bool = False
+    webhook_url: str = ""
+    secret: str = ""
+    at_mobiles: List[str] = field(default_factory=list)
+    at_all: bool = False
+
+
+@dataclass
+class WeWorkConfig:
+    """企业微信通知配置"""
+    enabled: bool = False
+    webhook_url: str = ""
+    mentioned_list: List[str] = field(default_factory=list)
+    mentioned_mobile_list: List[str] = field(default_factory=list)
+
+
+@dataclass
+class EmailConfig:
+    """邮件通知配置"""
+    enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 465
+    username: str = ""
+    password: str = ""
+    from_addr: str = ""
+    to_addrs: List[str] = field(default_factory=list)
+    use_ssl: bool = True
+
+
+@dataclass
+class NotificationConfig:
+    """通知配置"""
+    dingtalk: DingTalkConfig = field(default_factory=DingTalkConfig)
+    wework: WeWorkConfig = field(default_factory=WeWorkConfig)
+    email: EmailConfig = field(default_factory=EmailConfig)
+
+
 class Config:
     """配置管理器"""
 
@@ -85,6 +125,7 @@ class Config:
         self.monitor = self._parse_monitor_config()
         self.retry = self._parse_retry_config()
         self.logging = self._parse_logging_config()
+        self.notification = self._parse_notification_config()
         self.projects = self._parse_projects_config()
 
     def _load_config(self) -> None:
@@ -149,6 +190,48 @@ class Config:
             backup_count=log_config.get('backup_count', 5)
         )
 
+    def _parse_notification_config(self) -> NotificationConfig:
+        """解析通知配置"""
+        notification_config = self._raw_config.get('notification', {})
+
+        # 钉钉配置
+        dingtalk_config = notification_config.get('dingtalk', {})
+        dingtalk = DingTalkConfig(
+            enabled=self._get_env('DS_DINGTALK_ENABLED', dingtalk_config.get('enabled', False)) in [True, 'true', '1'],
+            webhook_url=self._get_env('DS_DINGTALK_WEBHOOK', dingtalk_config.get('webhook_url', '')),
+            secret=self._get_env('DS_DINGTALK_SECRET', dingtalk_config.get('secret', '')),
+            at_mobiles=dingtalk_config.get('at_mobiles', []),
+            at_all=dingtalk_config.get('at_all', False)
+        )
+
+        # 企业微信配置
+        wework_config = notification_config.get('wework', {})
+        wework = WeWorkConfig(
+            enabled=self._get_env('DS_WEWORK_ENABLED', wework_config.get('enabled', False)) in [True, 'true', '1'],
+            webhook_url=self._get_env('DS_WEWORK_WEBHOOK', wework_config.get('webhook_url', '')),
+            mentioned_list=wework_config.get('mentioned_list', []),
+            mentioned_mobile_list=wework_config.get('mentioned_mobile_list', [])
+        )
+
+        # 邮件配置
+        email_config = notification_config.get('email', {})
+        email = EmailConfig(
+            enabled=self._get_env('DS_EMAIL_ENABLED', email_config.get('enabled', False)) in [True, 'true', '1'],
+            smtp_host=self._get_env('DS_EMAIL_SMTP_HOST', email_config.get('smtp_host', '')),
+            smtp_port=int(self._get_env('DS_EMAIL_SMTP_PORT', email_config.get('smtp_port', 465))),
+            username=self._get_env('DS_EMAIL_USERNAME', email_config.get('username', '')),
+            password=self._get_env('DS_EMAIL_PASSWORD', email_config.get('password', '')),
+            from_addr=self._get_env('DS_EMAIL_FROM', email_config.get('from_addr', '')),
+            to_addrs=email_config.get('to_addrs', []),
+            use_ssl=email_config.get('use_ssl', True)
+        )
+
+        return NotificationConfig(
+            dingtalk=dingtalk,
+            wework=wework,
+            email=email
+        )
+
     def _parse_projects_config(self) -> List[ProjectConfig]:
         """解析项目配置"""
         projects_config = self._raw_config.get('projects', {})
@@ -188,6 +271,24 @@ class Config:
             'logging': {
                 'level': self.logging.level,
                 'file': self.logging.file
+            },
+            'notification': {
+                'dingtalk': {
+                    'enabled': self.notification.dingtalk.enabled,
+                    'webhook_url': '***' if self.notification.dingtalk.webhook_url else '',
+                    'secret': '***' if self.notification.dingtalk.secret else ''
+                },
+                'wework': {
+                    'enabled': self.notification.wework.enabled,
+                    'webhook_url': '***' if self.notification.wework.webhook_url else ''
+                },
+                'email': {
+                    'enabled': self.notification.email.enabled,
+                    'smtp_host': self.notification.email.smtp_host,
+                    'smtp_port': self.notification.email.smtp_port,
+                    'from_addr': self.notification.email.from_addr,
+                    'to_addrs': self.notification.email.to_addrs
+                }
             },
             'projects': [
                 {
