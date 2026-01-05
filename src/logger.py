@@ -81,17 +81,30 @@ class Logger:
 
         # 文件处理器
         if log_file:
-            log_path = Path(log_file)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                log_path = Path(log_file)
 
-            file_handler = RotatingFileHandler(
-                log_path,
-                maxBytes=max_size * 1024 * 1024,
-                backupCount=backup_count,
-                encoding='utf-8'
-            )
-            file_handler.setFormatter(logging.Formatter(log_format, date_format))
-            self.logger.addHandler(file_handler)
+                # 确保日志目录存在
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+
+                file_handler = RotatingFileHandler(
+                    log_path,
+                    maxBytes=max_size * 1024 * 1024,
+                    backupCount=backup_count,
+                    encoding='utf-8'
+                )
+                file_handler.setFormatter(logging.Formatter(log_format, date_format))
+                self.logger.addHandler(file_handler)
+            except (PermissionError, OSError) as e:
+                # 如果无法创建日志文件，只输出到控制台
+                self.logger.warning(
+                    f"无法创建日志文件 {log_file}: {str(e)}. "
+                    f"日志将只输出到控制台。"
+                )
+                self.logger.warning(
+                    "提示: 在 Docker 环境中，请确保日志目录有正确的权限。"
+                    "参考文档: DOCKER_DEPLOYMENT.md"
+                )
 
         self._initialized = True
 

@@ -24,6 +24,7 @@ from .notifiers.message_builder import (
     build_recovery_failed_message,
     build_threshold_exceeded_message
 )
+from .notifiers.rate_limiter import NotificationRateLimiter
 
 
 @dataclass
@@ -78,6 +79,12 @@ class WorkflowMonitor:
 
         # 初始化通知管理器
         self.notification_manager = create_notification_manager(config.notification)
+
+        # 初始化通知限流器（24小时内最多6次）
+        self.notification_rate_limiter = NotificationRateLimiter(
+            time_window_hours=24,
+            max_notifications=6
+        )
 
         # 监控状态
         self.stats = MonitorStats()
@@ -363,16 +370,47 @@ class WorkflowMonitor:
                     f"超过阈值({max_failures_threshold}个)，只通知不恢复"
                 )
 
-                # 发送超过阈值通知（只发一次，使用第一个实例）
+                # 发送超过阈值通知（带限流控制）
                 if instances and self.notification_manager.has_notifiers():
-                    message = build_threshold_exceeded_message(
-                        workflow=instances[0],
+                    # 检查是否可以发送通知（24小时内最多6次）
+                    if self.notification_rate_limiter.can_notify(
                         project_name=monitored.config.name,
-                        failure_count=failure_count,
-                        threshold=max_failures_threshold,
-                        time_window=time_window_hours
-                    )
-                    self.notification_manager.send(message)
+                        workflow_definition_code=def_code,
+                        workflow_name=wf_name
+                    ):
+                        message = build_threshold_exceeded_message(
+                            workflow=instances[0],
+                            project_name=monitored.config.name,
+                            failure_count=failure_count,
+                            threshold=max_failures_threshold,
+                            time_window=time_window_hours
+                        )
+                        self.notification_manager.send(message)
+
+                        # 记录本次通知
+                        self.notification_rate_limiter.record_notification(
+                            project_name=monitored.config.name,
+                            workflow_definition_code=def_code,
+                            workflow_name=wf_name
+                        )
+
+                        remaining = self.notification_rate_limiter.get_remaining_notifications(
+                            project_name=monitored.config.name,
+                            workflow_definition_code=def_code
+                        )
+                        self.logger.info(
+                            f"已发送超过阈值通知，24小时内还可发送 {remaining} 次通知"
+                        )
+                    else:
+                        # 超过通知限制
+                        count = self.notification_rate_limiter.get_notification_count(
+                            project_name=monitored.config.name,
+                            workflow_definition_code=def_code
+                        )
+                        self.logger.warning(
+                            f"工作流 [{wf_name}] 在24小时内已发送 {count} 次通知，"
+                            f"达到上限(6次)，已跳过本次通知"
+                        )
             else:
                 # 未超过阈值：可以尝试自动恢复
                 workflows_to_recover.extend(instances)
@@ -401,7 +439,7 @@ class WorkflowMonitor:
             )
 
         for instance in workflows_to_recover:
-            # 触发失败检测回调
+            # 触发失败检测回调（保留旧的回调接口）
             if self._on_failure_detected:
                 self._on_failure_detected(instance)
 
@@ -412,12 +450,12 @@ class WorkflowMonitor:
             )
             results.append(result)
 
-            # 更新统计
+            # 更新统计并发送通知
             if result.recovery_executed:
                 self.stats.recovery_attempts += 1
+
                 if result.recovery_success:
                     self.stats.successful_recoveries += 1
-
                     # 发送恢复成功通知
                     if self.notification_manager.has_notifiers():
                         message = build_recovery_success_message(
@@ -425,6 +463,7 @@ class WorkflowMonitor:
                             project_name=monitored.config.name
                         )
                         self.notification_manager.send(message)
+                        self.logger.debug(f"已发送恢复成功通知: {instance.name}")
                 else:
                     # 发送恢复失败通知
                     if self.notification_manager.has_notifiers():
@@ -433,6 +472,7 @@ class WorkflowMonitor:
                             project_name=monitored.config.name
                         )
                         self.notification_manager.send(message)
+                        self.logger.debug(f"已发送恢复失败通知: {instance.name}")
 
                 # 触发恢复执行回调
                 if self._on_recovery_executed:
