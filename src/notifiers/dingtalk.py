@@ -148,7 +148,7 @@ class DingTalkNotifier(Notifier):
             Markdown 格式的消息文本
         """
         emoji = self.LEVEL_EMOJI.get(message.level, "📢")
-        level_text = self.LEVEL_TEXT.get(message.level, "通知")
+        level_text = self.LEVEL_TEXT.get(message.level, "dolphin通知")
 
         # 构建消息内容
         lines = [
