@@ -60,6 +60,7 @@ class DingTalkConfig:
     enabled: bool = False
     webhook_url: str = ""
     secret: str = ""
+    keyword: str = ""  # 安全设置中的关键词，消息内容需包含此关键词
     at_mobiles: List[str] = field(default_factory=list)
     at_all: bool = False
 
@@ -200,6 +201,7 @@ class Config:
             enabled=self._get_env('DS_DINGTALK_ENABLED', dingtalk_config.get('enabled', False)) in [True, 'true', '1'],
             webhook_url=self._get_env('DS_DINGTALK_WEBHOOK', dingtalk_config.get('webhook_url', '')),
             secret=self._get_env('DS_DINGTALK_SECRET', dingtalk_config.get('secret', '')),
+            keyword=self._get_env('DS_DINGTALK_KEYWORD', dingtalk_config.get('keyword', '')),
             at_mobiles=dingtalk_config.get('at_mobiles', []),
             at_all=dingtalk_config.get('at_all', False)
         )

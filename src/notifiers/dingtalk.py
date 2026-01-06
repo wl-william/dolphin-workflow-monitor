@@ -70,6 +70,7 @@ class DingTalkNotifier(Notifier):
         self,
         webhook_url: str,
         secret: Optional[str] = None,
+        keyword: Optional[str] = None,
         enabled: bool = True,
         at_mobiles: Optional[list] = None,
         at_all: bool = False
@@ -80,6 +81,7 @@ class DingTalkNotifier(Notifier):
         Args:
             webhook_url: 钉钉机器人 Webhook URL
             secret: 钉钉机器人加签密钥（可选）
+            keyword: 钉钉机器人安全设置中的关键词（可选）
             enabled: 是否启用
             at_mobiles: 要@的手机号列表（可选）
             at_all: 是否@所有人（可选）
@@ -87,6 +89,7 @@ class DingTalkNotifier(Notifier):
         super().__init__(enabled)
         self.webhook_url = webhook_url
         self.secret = secret
+        self.keyword = keyword or ""
         self.at_mobiles = at_mobiles or []
         self.at_all = at_all
         self.logger = get_logger()
@@ -148,15 +151,22 @@ class DingTalkNotifier(Notifier):
             Markdown 格式的消息文本
         """
         emoji = self.LEVEL_EMOJI.get(message.level, "📢")
-        level_text = self.LEVEL_TEXT.get(message.level, "dolphin通知")
+        level_text = self.LEVEL_TEXT.get(message.level, "通知")
 
         # 构建消息内容
-        lines = [
+        lines = []
+
+        # 如果配置了关键词，添加到消息开头
+        if self.keyword:
+            lines.append(f"**{self.keyword}**")
+            lines.append("")
+
+        lines.extend([
             f"## {emoji} {message.title}",
             "",
             f"**级别**: {level_text}",
             f"**时间**: {message.timestamp}",
-        ]
+        ])
 
         # 添加项目和工作流信息
         if message.project_name:

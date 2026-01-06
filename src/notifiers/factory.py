@@ -35,6 +35,7 @@ def create_notification_manager(config: 'NotificationConfig') -> NotificationMan
             dingtalk = DingTalkNotifier(
                 webhook_url=config.dingtalk.webhook_url,
                 secret=config.dingtalk.secret or None,
+                keyword=config.dingtalk.keyword or None,
                 enabled=True,
                 at_mobiles=config.dingtalk.at_mobiles,
                 at_all=config.dingtalk.at_all
