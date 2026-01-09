@@ -193,6 +193,20 @@ class ProcessDefinition:
     description: Optional[str] = None
 
 
+@dataclass
+class WorkflowSchedule:
+    """工作流调度信息"""
+    id: int
+    process_definition_code: int
+    process_definition_name: str
+    project_name: str
+    crontab: str                     # Cron 表达式
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    timezone_id: str = "Asia/Shanghai"
+    release_state: str = "ONLINE"    # ONLINE/OFFLINE
+
+
 class DolphinSchedulerClient:
     """DolphinScheduler API 客户端"""
 
@@ -373,6 +387,76 @@ class DolphinSchedulerClient:
             )
             for p in records
         ]
+
+    @cached(ttl_seconds=3600, key_prefix="schedules")
+    @monitored(api_name="get_workflow_schedules")
+    def get_workflow_schedules(
+        self,
+        project_code: int,
+        process_definition_code: Optional[int] = None
+    ) -> List[WorkflowSchedule]:
+        """
+        获取工作流调度信息（缓存1小时）
+
+        Args:
+            project_code: 项目编码
+            process_definition_code: 工作流定义编码（可选，不传则获取项目下所有调度）
+
+        Returns:
+            工作流调度列表
+        """
+        params = {
+            'pageNo': 1,
+            'pageSize': 100
+        }
+
+        if process_definition_code:
+            params['processDefinitionCode'] = process_definition_code
+
+        result = self._request(
+            'GET',
+            f'/projects/{project_code}/schedules',
+            params=params
+        )
+
+        if not result['success'] or not result['data']:
+            return []
+
+        records = result['data'].get('totalList', [])
+        return [
+            WorkflowSchedule(
+                id=s.get('id'),
+                process_definition_code=s.get('processDefinitionCode'),
+                process_definition_name=s.get('processDefinitionName', ''),
+                project_name=s.get('projectName', ''),
+                crontab=s.get('crontab', ''),
+                start_time=s.get('startTime'),
+                end_time=s.get('endTime'),
+                timezone_id=s.get('timezoneId', 'Asia/Shanghai'),
+                release_state=s.get('releaseState', 'OFFLINE')
+            )
+            for s in records
+        ]
+
+    def get_workflow_schedule_map(
+        self,
+        project_code: int
+    ) -> Dict[int, WorkflowSchedule]:
+        """
+        获取项目下所有工作流的调度信息映射
+
+        Args:
+            project_code: 项目编码
+
+        Returns:
+            {process_definition_code: WorkflowSchedule}
+        """
+        schedules = self.get_workflow_schedules(project_code)
+        return {
+            s.process_definition_code: s
+            for s in schedules
+            if s.release_state == 'ONLINE'  # 只返回已上线的调度
+        }
 
     @monitored(api_name="get_workflow_instances")
     def get_workflow_instances(

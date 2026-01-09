@@ -25,6 +25,7 @@ from .notifiers.message_builder import (
     build_threshold_exceeded_message
 )
 from .notifiers.rate_limiter import NotificationRateLimiter
+from .schedule_tracker import ScheduleTracker, WorkflowPeriodStatus
 
 
 @dataclass
@@ -36,6 +37,8 @@ class MonitorStats:
     recovery_attempts: int = 0
     successful_recoveries: int = 0
     skipped_due_to_threshold: int = 0  # 因超过阈值而跳过恢复的数量
+    skipped_due_to_schedule: int = 0   # 因调度状态跳过的 API 调用数量
+    api_calls_saved: int = 0           # 节省的 API 调用次数
     last_check_time: Optional[str] = None
     errors: List[str] = field(default_factory=list)
     # 24小时内失败工作流统计（按项目和工作流分组）
@@ -86,6 +89,16 @@ class WorkflowMonitor:
             max_notifications=6
         )
 
+        # 初始化调度状态追踪器
+        self.schedule_tracker = ScheduleTracker(
+            state_file="data/schedule_state.json",
+            execution_window_hours=getattr(config.monitor, 'execution_window_hours', 4),
+            success_cooldown_minutes=getattr(config.monitor, 'success_cooldown_minutes', 30)
+        )
+        self.enable_schedule_optimization = getattr(
+            config.monitor, 'enable_schedule_optimization', True
+        )
+
         # 监控状态
         self.stats = MonitorStats()
         self.monitored_projects: List[MonitoredProject] = []
@@ -117,17 +130,49 @@ class WorkflowMonitor:
                 monitored.status = "active"
                 self.logger.info(f"找到项目: {monitored.config.name} (code: {project.code})")
 
+                # 获取项目下的工作流定义
+                workflows = self.client.get_process_definitions(project.code)
+                workflow_map = {w.name: w.code for w in workflows}
+
+                # 获取工作流调度信息（用于智能调度监控）
+                schedule_map = {}
+                if self.enable_schedule_optimization:
+                    schedule_map = self.client.get_workflow_schedule_map(project.code)
+                    self.logger.info(f"  获取到 {len(schedule_map)} 个工作流调度信息")
+
                 # 如果不是监控所有工作流，需要解析工作流编码
                 if not monitored.config.monitor_all and monitored.config.workflows:
-                    workflows = self.client.get_process_definitions(project.code)
-                    workflow_map = {w.name: w.code for w in workflows}
-
                     for wf_name in monitored.config.workflows:
                         if wf_name in workflow_map:
-                            monitored.workflow_codes[wf_name] = workflow_map[wf_name]
-                            self.logger.debug(f"  - 工作流: {wf_name} (code: {workflow_map[wf_name]})")
+                            wf_code = workflow_map[wf_name]
+                            monitored.workflow_codes[wf_name] = wf_code
+                            self.logger.debug(f"  - 工作流: {wf_name} (code: {wf_code})")
+
+                            # 注册工作流调度信息
+                            if wf_code in schedule_map:
+                                schedule = schedule_map[wf_code]
+                                self.schedule_tracker.register_workflow(
+                                    project_code=project.code,
+                                    project_name=monitored.config.name,
+                                    workflow_code=wf_code,
+                                    workflow_name=wf_name,
+                                    cron_expression=schedule.crontab
+                                )
+                                self.logger.debug(f"    调度: {schedule.crontab}")
                         else:
                             self.logger.warning(f"  - 未找到工作流: {wf_name}")
+                else:
+                    # monitor_all=true 时，注册所有有调度的工作流
+                    for wf in workflows:
+                        if wf.code in schedule_map:
+                            schedule = schedule_map[wf.code]
+                            self.schedule_tracker.register_workflow(
+                                project_code=project.code,
+                                project_name=monitored.config.name,
+                                workflow_code=wf.code,
+                                workflow_name=wf.name,
+                                cron_expression=schedule.crontab
+                            )
             else:
                 monitored.status = "not_found"
                 self.logger.warning(f"未找到项目: {monitored.config.name}")
@@ -247,7 +292,7 @@ class WorkflowMonitor:
         self.logger.debug(f"检查项目: {monitored.config.name}")
 
         # 获取失败的工作流实例
-        # 注意：只获取配置的工作流，不处理未配置的工作流
+        # 优化：使用调度状态追踪器减少不必要的 API 调用
         if monitored.config.monitor_all:
             # 监控所有工作流（获取项目下所有失败工作流）
             self.logger.debug(f"项目 {monitored.config.name} 配置为监控所有工作流")
@@ -261,20 +306,65 @@ class WorkflowMonitor:
                 )
                 return results
 
-            self.logger.debug(
-                f"项目 {monitored.config.name} 配置监控 {len(monitored.workflow_codes)} 个工作流"
-            )
-            failed_instances = []
-            for wf_name, wf_code in monitored.workflow_codes.items():
-                instances = self.client.get_failed_workflow_instances(
-                    project_code,
-                    process_definition_code=wf_code
+            # ============================================================
+            # 优化：智能调度监控
+            # 1. 使用调度状态追踪器过滤需要监控的工作流
+            # 2. 批量查询项目所有失败实例，本地过滤
+            # ============================================================
+            workflow_codes_list = list(monitored.workflow_codes.values())
+            workflows_to_check = workflow_codes_list
+            skipped_count = 0
+
+            if self.enable_schedule_optimization:
+                # 获取监控决策
+                to_monitor, decisions = self.schedule_tracker.get_workflows_to_monitor(
+                    project_code, workflow_codes_list
                 )
-                if instances:
-                    self.logger.debug(
-                        f"  - 工作流 [{wf_name}] (code:{wf_code}): {len(instances)} 个失败实例"
-                    )
-                failed_instances.extend(instances)
+
+                # 记录跳过的工作流
+                for decision in decisions:
+                    if not decision.should_query_api:
+                        skipped_count += 1
+                        self.logger.debug(
+                            f"  跳过工作流 [{decision.workflow_name}]: {decision.reason}"
+                        )
+
+                workflows_to_check = to_monitor
+                self.stats.skipped_due_to_schedule += skipped_count
+                self.stats.api_calls_saved += skipped_count
+
+            self.logger.debug(
+                f"项目 {monitored.config.name}: "
+                f"配置 {len(workflow_codes_list)} 个工作流，"
+                f"需检查 {len(workflows_to_check)} 个，跳过 {skipped_count} 个"
+            )
+
+            # 如果没有需要检查的工作流，直接返回
+            if not workflows_to_check:
+                self.logger.debug(f"项目 {monitored.config.name} 所有工作流都跳过检查")
+                return results
+
+            # 优化：批量查询 + 本地过滤（替代逐个查询）
+            # 只调用一次 API 获取项目所有失败实例
+            all_failed_instances = self.client.get_failed_workflow_instances(project_code)
+
+            # 本地过滤：只保留需要检查的工作流
+            target_codes = set(workflows_to_check)
+            failed_instances = [
+                wf for wf in all_failed_instances
+                if wf.process_definition_code in target_codes
+            ]
+
+            # 记录优化效果
+            original_api_calls = len(workflow_codes_list)
+            actual_api_calls = 1  # 批量查询只需 1 次
+            saved_calls = original_api_calls - actual_api_calls
+            self.stats.api_calls_saved += saved_calls
+
+            if failed_instances:
+                self.logger.debug(
+                    f"项目 {monitored.config.name} 过滤后: {len(failed_instances)} 个失败实例"
+                )
 
         if not failed_instances:
             self.logger.debug(f"项目 {monitored.config.name} 中没有失败的工作流")
@@ -456,6 +546,15 @@ class WorkflowMonitor:
 
                 if result.recovery_success:
                     self.stats.successful_recoveries += 1
+
+                    # 更新调度追踪器状态
+                    if self.enable_schedule_optimization:
+                        self.schedule_tracker.mark_recovered(
+                            project_code=project_code,
+                            workflow_code=instance.process_definition_code,
+                            instance_id=instance.id
+                        )
+
                     # 发送恢复成功通知
                     if self.notification_manager.has_notifiers():
                         message = build_recovery_success_message(
@@ -465,6 +564,14 @@ class WorkflowMonitor:
                         self.notification_manager.send(message)
                         self.logger.debug(f"已发送恢复成功通知: {instance.name}")
                 else:
+                    # 更新调度追踪器状态（恢复失败，继续监控）
+                    if self.enable_schedule_optimization:
+                        self.schedule_tracker.mark_failed(
+                            project_code=project_code,
+                            workflow_code=instance.process_definition_code,
+                            instance_id=instance.id
+                        )
+
                     # 发送恢复失败通知
                     if self.notification_manager.has_notifiers():
                         message = build_recovery_failed_message(
@@ -571,6 +678,17 @@ class WorkflowMonitor:
         self.logger.info(f"恢复尝试: {self.stats.recovery_attempts}")
         self.logger.info(f"恢复成功: {self.stats.successful_recoveries}")
 
+        # 输出 API 优化统计
+        if self.enable_schedule_optimization:
+            self.logger.info("-" * 60)
+            self.logger.info("API 调用优化统计:")
+            self.logger.info(f"  因调度状态跳过检查: {self.stats.skipped_due_to_schedule} 次")
+            self.logger.info(f"  节省 API 调用: {self.stats.api_calls_saved} 次")
+            if self.stats.check_count > 0:
+                # 估算优化效果
+                avg_saved_per_check = self.stats.api_calls_saved / self.stats.check_count
+                self.logger.info(f"  平均每次检查节省: {avg_saved_per_check:.1f} 次 API 调用")
+
         # 输出24小时内失败工作流统计
         if self.stats.workflow_failure_stats:
             self.logger.info("-" * 60)
@@ -587,6 +705,10 @@ class WorkflowMonitor:
         # 输出 API 调用统计
         self.logger.info("")
         self.client.print_stats()
+
+        # 输出调度追踪统计
+        if self.enable_schedule_optimization:
+            self.schedule_tracker.print_stats()
 
         self.logger.info("=" * 60)
 

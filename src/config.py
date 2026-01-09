@@ -28,6 +28,10 @@ class MonitorConfig:
     timeout: int = 300
     time_window_hours: int = 24  # 只监控指定小时内启动的工作流
     max_failures_for_recovery: int = 1  # 时间窗口内最多失败数量，超过则只通知不恢复
+    # API 调用优化配置
+    enable_schedule_optimization: bool = True  # 启用调度感知优化
+    execution_window_hours: int = 4  # 执行窗口时长（小时），调度时间后的监控窗口
+    success_cooldown_minutes: int = 30  # 成功/恢复后的冷却时间（分钟）
 
 
 @dataclass
@@ -158,13 +162,19 @@ class Config:
         continuous_mode = self._get_env('DS_CONTINUOUS_MODE')
         time_window_hours = self._get_env('DS_TIME_WINDOW_HOURS')
         max_failures = self._get_env('DS_MAX_FAILURES_FOR_RECOVERY')
+        enable_schedule_opt = self._get_env('DS_ENABLE_SCHEDULE_OPTIMIZATION')
+        execution_window = self._get_env('DS_EXECUTION_WINDOW_HOURS')
+        success_cooldown = self._get_env('DS_SUCCESS_COOLDOWN_MINUTES')
 
         return MonitorConfig(
             check_interval=int(check_interval) if check_interval else mon_config.get('check_interval', 60),
             continuous_mode=continuous_mode.lower() == 'true' if continuous_mode else mon_config.get('continuous_mode', True),
             timeout=mon_config.get('timeout', 300),
             time_window_hours=int(time_window_hours) if time_window_hours else mon_config.get('time_window_hours', 24),
-            max_failures_for_recovery=int(max_failures) if max_failures else mon_config.get('max_failures_for_recovery', 1)
+            max_failures_for_recovery=int(max_failures) if max_failures else mon_config.get('max_failures_for_recovery', 1),
+            enable_schedule_optimization=enable_schedule_opt.lower() == 'true' if enable_schedule_opt else mon_config.get('enable_schedule_optimization', True),
+            execution_window_hours=int(execution_window) if execution_window else mon_config.get('execution_window_hours', 4),
+            success_cooldown_minutes=int(success_cooldown) if success_cooldown else mon_config.get('success_cooldown_minutes', 30)
         )
 
     def _parse_retry_config(self) -> RetryConfig:
