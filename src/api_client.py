@@ -393,25 +393,26 @@ class DolphinSchedulerClient:
     def get_workflow_schedules(
         self,
         project_code: int,
-        process_definition_code: Optional[int] = None
+        process_definition_code: int
     ) -> List[WorkflowSchedule]:
         """
-        获取工作流调度信息（缓存1小时）
+        获取指定工作流的调度信息（缓存1小时）
+
+        注意：DolphinScheduler 的 schedules API 必须传递 processDefinitionCode 参数，
+        否则会返回 "query schedule list paging error" 错误。
 
         Args:
             project_code: 项目编码
-            process_definition_code: 工作流定义编码（可选，不传则获取项目下所有调度）
+            process_definition_code: 工作流定义编码（必需）
 
         Returns:
             工作流调度列表
         """
         params = {
             'pageNo': 1,
-            'pageSize': 100
+            'pageSize': 100,
+            'processDefinitionCode': process_definition_code
         }
-
-        if process_definition_code:
-            params['processDefinitionCode'] = process_definition_code
 
         result = self._request(
             'GET',
@@ -440,23 +441,36 @@ class DolphinSchedulerClient:
 
     def get_workflow_schedule_map(
         self,
-        project_code: int
+        project_code: int,
+        workflow_codes: Optional[List[int]] = None
     ) -> Dict[int, WorkflowSchedule]:
         """
-        获取项目下所有工作流的调度信息映射
+        获取工作流的调度信息映射
+
+        DolphinScheduler 的 schedules API 必须传递 processDefinitionCode 参数，
+        因此需要逐个工作流查询调度信息。
 
         Args:
             project_code: 项目编码
+            workflow_codes: 指定的工作流编码列表（如果为None则获取项目下所有工作流）
 
         Returns:
             {process_definition_code: WorkflowSchedule}
         """
-        schedules = self.get_workflow_schedules(project_code)
-        return {
-            s.process_definition_code: s
-            for s in schedules
-            if s.release_state == 'ONLINE'  # 只返回已上线的调度
-        }
+        # 如果没有指定工作流，则获取项目下所有工作流定义
+        if workflow_codes is None:
+            workflows = self.get_process_definitions(project_code)
+            workflow_codes = [w.code for w in workflows]
+
+        schedule_map = {}
+        for wf_code in workflow_codes:
+            # 逐个工作流查询调度信息（必须传递 processDefinitionCode）
+            schedules = self.get_workflow_schedules(project_code, wf_code)
+            for s in schedules:
+                if s.release_state == 'ONLINE':  # 只返回已上线的调度
+                    schedule_map[s.process_definition_code] = s
+
+        return schedule_map
 
     @monitored(api_name="get_workflow_instances")
     def get_workflow_instances(

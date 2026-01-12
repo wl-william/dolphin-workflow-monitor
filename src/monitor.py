@@ -134,10 +134,24 @@ class WorkflowMonitor:
                 workflows = self.client.get_process_definitions(project.code)
                 workflow_map = {w.name: w.code for w in workflows}
 
+                # 根据配置确定需要查询调度的工作流
+                if not monitored.config.monitor_all and monitored.config.workflows:
+                    # 只查询配置的工作流的调度信息
+                    target_workflow_codes = [
+                        workflow_map[wf_name]
+                        for wf_name in monitored.config.workflows
+                        if wf_name in workflow_map
+                    ]
+                else:
+                    # monitor_all=true，查询所有工作流
+                    target_workflow_codes = None
+
                 # 获取工作流调度信息（用于智能调度监控）
                 schedule_map = {}
                 if self.enable_schedule_optimization:
-                    schedule_map = self.client.get_workflow_schedule_map(project.code)
+                    schedule_map = self.client.get_workflow_schedule_map(
+                        project.code, target_workflow_codes
+                    )
                     self.logger.info(f"  获取到 {len(schedule_map)} 个工作流调度信息")
 
                 # 如果不是监控所有工作流，需要解析工作流编码
