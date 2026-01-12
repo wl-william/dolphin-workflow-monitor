@@ -407,8 +407,7 @@ class DolphinSchedulerClient:
         """
         params = {
             'pageNo': 1,
-            'pageSize': 100,
-            'searchVal': ''  # DolphinScheduler schedules API 需要此参数
+            'pageSize': 100
         }
 
         if process_definition_code:
