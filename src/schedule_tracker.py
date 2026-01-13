@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 from enum import Enum
 
 from .cron_parser import CronParser, SchedulePeriod
@@ -99,7 +99,7 @@ class ScheduleTracker:
         self.execution_window_hours = execution_window_hours
         self.success_cooldown_minutes = success_cooldown_minutes
         self.logger = get_logger()
-        self._lock = Lock()
+        self._lock = RLock()
 
         # 工作流状态: {project_code}_{workflow_code} -> WorkflowScheduleState
         self._states: Dict[str, WorkflowScheduleState] = {}

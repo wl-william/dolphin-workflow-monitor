@@ -163,8 +163,13 @@ class Config:
         time_window_hours = self._get_env('DS_TIME_WINDOW_HOURS')
         max_failures = self._get_env('DS_MAX_FAILURES_FOR_RECOVERY')
         enable_schedule_opt = self._get_env('DS_ENABLE_SCHEDULE_OPTIMIZATION')
+        enable_scheduler_opt = self._get_env('DS_ENABLE_SCHEDULER_OPTIMIZATION')
         execution_window = self._get_env('DS_EXECUTION_WINDOW_HOURS')
         success_cooldown = self._get_env('DS_SUCCESS_COOLDOWN_MINUTES')
+
+        file_schedule_opt = mon_config.get('enable_schedule_optimization')
+        if file_schedule_opt is None:
+            file_schedule_opt = mon_config.get('enable_scheduler_optimization', True)
 
         return MonitorConfig(
             check_interval=int(check_interval) if check_interval else mon_config.get('check_interval', 60),
@@ -172,7 +177,9 @@ class Config:
             timeout=mon_config.get('timeout', 300),
             time_window_hours=int(time_window_hours) if time_window_hours else mon_config.get('time_window_hours', 24),
             max_failures_for_recovery=int(max_failures) if max_failures else mon_config.get('max_failures_for_recovery', 1),
-            enable_schedule_optimization=enable_schedule_opt.lower() == 'true' if enable_schedule_opt else mon_config.get('enable_schedule_optimization', True),
+            enable_schedule_optimization=(enable_schedule_opt or enable_scheduler_opt).lower() == 'true'
+            if (enable_schedule_opt or enable_scheduler_opt)
+            else file_schedule_opt,
             execution_window_hours=int(execution_window) if execution_window else mon_config.get('execution_window_hours', 4),
             success_cooldown_minutes=int(success_cooldown) if success_cooldown else mon_config.get('success_cooldown_minutes', 30)
         )

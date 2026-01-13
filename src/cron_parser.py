@@ -99,7 +99,7 @@ class CronParser:
 
         return sorted(values)
 
-    def get_schedule_times(self, reference_time: datetime = None) -> Tuple[datetime, datetime]:
+    def get_schedule_times(self, reference_time: Optional[datetime] = None) -> Tuple[datetime, datetime]:
         """
         获取上次和下次调度时间
 
@@ -112,40 +112,48 @@ class CronParser:
         if reference_time is None:
             reference_time = datetime.now()
 
+        day = self.parts['day']
+        month = self.parts['month']
+        weekday = self.parts['weekday']
+
+        if not (day in {'*', '?'} and month == '*' and weekday in {'*', '?'}):
+            raise ValueError("暂仅支持按天/小时的调度表达式")
+
         # 解析各字段
         hours = self._parse_field(self.parts['hour'], 0, 23)
         minutes = self._parse_field(self.parts['minute'], 0, 59)
         seconds = self._parse_field(self.parts['second'], 0, 59)
 
-        # 简化处理：假设是每天固定时间执行
-        # 取第一个匹配的时间点
-        schedule_hour = hours[0] if hours else 0
-        schedule_minute = minutes[0] if minutes else 0
-        schedule_second = seconds[0] if seconds else 0
-
-        # 计算今天的调度时间
-        today_schedule = reference_time.replace(
-            hour=schedule_hour,
-            minute=schedule_minute,
-            second=schedule_second,
-            microsecond=0
+        # 生成今天所有可能的调度时间点
+        schedule_times_today = sorted(
+            reference_time.replace(hour=h, minute=m, second=s, microsecond=0)
+            for h in hours
+            for m in minutes
+            for s in seconds
         )
 
-        # 判断上次和下次调度时间
-        if reference_time >= today_schedule:
-            # 今天的调度时间已过
-            last_schedule = today_schedule
-            next_schedule = today_schedule + timedelta(days=1)
-        else:
-            # 今天的调度时间未到
-            last_schedule = today_schedule - timedelta(days=1)
-            next_schedule = today_schedule
+        # 找到上次和下次调度时间
+        last_schedule: Optional[datetime] = None
+        next_schedule: Optional[datetime] = None
+        for schedule_time in schedule_times_today:
+            if schedule_time <= reference_time:
+                last_schedule = schedule_time
+            elif next_schedule is None:
+                next_schedule = schedule_time
+
+        if last_schedule is None:
+            last_schedule = schedule_times_today[-1] - timedelta(days=1)
+        if next_schedule is None:
+            next_schedule = schedule_times_today[0] + timedelta(days=1)
+
+        assert last_schedule is not None
+        assert next_schedule is not None
 
         return last_schedule, next_schedule
 
     def get_schedule_period(
         self,
-        reference_time: datetime = None,
+        reference_time: Optional[datetime] = None,
         execution_window_hours: int = 4
     ) -> SchedulePeriod:
         """
@@ -178,7 +186,7 @@ class CronParser:
 
     def should_monitor_now(
         self,
-        reference_time: datetime = None,
+        reference_time: Optional[datetime] = None,
         execution_window_hours: int = 4
     ) -> Tuple[bool, str]:
         """
