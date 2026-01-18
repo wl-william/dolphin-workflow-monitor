@@ -213,6 +213,8 @@ class ScheduleTracker:
                     self.logger.debug(
                         f"工作流 {state.workflow_name} 进入新周期: {new_period_start}"
                     )
+                    # 持久化状态，确保程序重启后状态正确
+                    self._save_state()
 
             except Exception as e:
                 self.logger.warning(

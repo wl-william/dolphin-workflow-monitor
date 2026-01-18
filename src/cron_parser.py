@@ -99,6 +99,52 @@ class CronParser:
 
         return sorted(values)
 
+    def _get_fallback_schedule_times(self, reference_time: datetime) -> Tuple[datetime, datetime]:
+        """
+        为不支持的 cron 表达式提供基于天的保守调度时间
+
+        对于周/月调度，我们使用每天凌晨 00:00 作为周期边界。
+        这确保了每天都会重置状态，避免监控长期失效。
+
+        Args:
+            reference_time: 参考时间
+
+        Returns:
+            (上次调度时间, 下次调度时间)
+        """
+        # 尝试解析小时字段，获取调度时间点
+        try:
+            hours = self._parse_field(self.parts['hour'], 0, 23)
+            minutes = self._parse_field(self.parts['minute'], 0, 59)
+            seconds = self._parse_field(self.parts['second'], 0, 59)
+
+            # 使用第一个调度时间点作为当天的调度时间
+            hour = hours[0] if hours else 0
+            minute = minutes[0] if minutes else 0
+            second = seconds[0] if seconds else 0
+
+            # 当天的调度时间
+            today_schedule = reference_time.replace(
+                hour=hour, minute=minute, second=second, microsecond=0
+            )
+
+            if reference_time >= today_schedule:
+                # 当前时间已过调度时间，上次调度是今天，下次是明天
+                last_schedule = today_schedule
+                next_schedule = today_schedule + timedelta(days=1)
+            else:
+                # 当前时间未到调度时间，上次调度是昨天，下次是今天
+                last_schedule = today_schedule - timedelta(days=1)
+                next_schedule = today_schedule
+
+            return last_schedule, next_schedule
+        except Exception:
+            # 如果解析失败，使用最保守的策略：以当天 00:00 为周期边界
+            today_midnight = reference_time.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            return today_midnight, today_midnight + timedelta(days=1)
+
     def get_schedule_times(self, reference_time: Optional[datetime] = None) -> Tuple[datetime, datetime]:
         """
         获取上次和下次调度时间
@@ -116,8 +162,13 @@ class CronParser:
         month = self.parts['month']
         weekday = self.parts['weekday']
 
-        if not (day in {'*', '?'} and month == '*' and weekday in {'*', '?'}):
-            raise ValueError("暂仅支持按天/小时的调度表达式")
+        # 检查是否是简单的每日/每小时调度
+        is_simple_daily = day in {'*', '?'} and month == '*' and weekday in {'*', '?'}
+
+        if not is_simple_daily:
+            # 对于周/月调度，使用基于天的保守策略
+            # 确保每天都会重置状态，避免监控失效
+            return self._get_fallback_schedule_times(reference_time)
 
         # 解析各字段
         hours = self._parse_field(self.parts['hour'], 0, 23)
