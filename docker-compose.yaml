@@ -16,16 +16,17 @@ services:
       - DS_API_URL=${DS_API_URL:-http://dolphinscheduler:12345/dolphinscheduler}
       - DS_TOKEN=${DS_TOKEN}
 
-      # 监控配置
-      - DS_CHECK_INTERVAL=${DS_CHECK_INTERVAL:-60}
-      - DS_CONTINUOUS_MODE=${DS_CONTINUOUS_MODE:-true}
+      # 监控配置（不设置默认值，优先使用 config/config.yaml 中的配置）
+      # 如需通过环境变量覆盖，请在宿主机或 .env 文件中显式设置
+      - DS_CHECK_INTERVAL=${DS_CHECK_INTERVAL:-}
+      - DS_CONTINUOUS_MODE=${DS_CONTINUOUS_MODE:-}
 
       # 恢复配置
-      - DS_AUTO_RECOVERY=${DS_AUTO_RECOVERY:-true}
-      - DS_MAX_RECOVERY_ATTEMPTS=${DS_MAX_RECOVERY_ATTEMPTS:-3}
+      - DS_AUTO_RECOVERY=${DS_AUTO_RECOVERY:-}
+      - DS_MAX_RECOVERY_ATTEMPTS=${DS_MAX_RECOVERY_ATTEMPTS:-}
 
       # 日志级别
-      - DS_LOG_LEVEL=${DS_LOG_LEVEL:-INFO}
+      - DS_LOG_LEVEL=${DS_LOG_LEVEL:-}
     volumes:
       # 挂载配置文件
       - ./config:/app/config:ro

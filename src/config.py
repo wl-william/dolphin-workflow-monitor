@@ -201,8 +201,9 @@ class Config:
         """解析日志配置"""
         log_config = self._raw_config.get('logging', {})
 
+        log_level_env = self._get_env('DS_LOG_LEVEL')
         return LoggingConfig(
-            level=self._get_env('DS_LOG_LEVEL', log_config.get('level', 'INFO')),
+            level=log_level_env if log_level_env else log_config.get('level', 'INFO'),
             file=log_config.get('file', 'logs/monitor.log'),
             max_size=log_config.get('max_size', 10),
             backup_count=log_config.get('backup_count', 5)

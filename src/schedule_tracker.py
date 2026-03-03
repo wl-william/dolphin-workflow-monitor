@@ -383,23 +383,24 @@ class ScheduleTracker:
                             current_status=state.status
                         )
 
-            # 3. 不在执行窗口内 -> 跳过
-            if not period.is_in_execution_window:
+            # 3. 本周期已失败 -> 始终持续监控，不受执行窗口限制
+            # 必须在执行窗口检查之前判断，确保失败的工作流在窗口外也能被持续跟踪
+            if state.status == WorkflowPeriodStatus.FAILED.value:
                 return MonitorDecision(
-                    should_monitor=False,
-                    should_query_api=False,
-                    reason=f"不在执行窗口内，下次调度: {period.next_start.strftime('%Y-%m-%d %H:%M')}",
+                    should_monitor=True,
+                    should_query_api=True,
+                    reason="本周期失败，持续监控直到恢复",
                     workflow_code=workflow_code,
                     workflow_name=state.workflow_name,
                     current_status=state.status
                 )
 
-            # 4. 在执行窗口内且状态为失败 -> 需要监控
-            if state.status == WorkflowPeriodStatus.FAILED.value:
+            # 4. 不在执行窗口内 -> 跳过
+            if not period.is_in_execution_window:
                 return MonitorDecision(
-                    should_monitor=True,
-                    should_query_api=True,
-                    reason="本周期失败，持续监控",
+                    should_monitor=False,
+                    should_query_api=False,
+                    reason=f"不在执行窗口内，下次调度: {period.next_start.strftime('%Y-%m-%d %H:%M')}",
                     workflow_code=workflow_code,
                     workflow_name=state.workflow_name,
                     current_status=state.status
