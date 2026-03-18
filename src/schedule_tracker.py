@@ -367,21 +367,16 @@ class ScheduleTracker:
                     current_status=state.status
                 )
 
-            # 2. 本周期已恢复 -> 跳过（短时间内）
+            # 2. 本周期已恢复 -> 仍需监控（恢复后可能再次失败）
             if state.status == WorkflowPeriodStatus.RECOVERED.value:
-                if state.recovery_time:
-                    recovery_time = datetime.fromisoformat(state.recovery_time)
-                    cooldown = timedelta(minutes=self.success_cooldown_minutes)
-                    if now - recovery_time < cooldown:
-                        remaining = cooldown - (now - recovery_time)
-                        return MonitorDecision(
-                            should_monitor=False,
-                            should_query_api=False,
-                            reason=f"刚恢复成功，冷却中 (剩余 {remaining.seconds // 60} 分钟)",
-                            workflow_code=workflow_code,
-                            workflow_name=state.workflow_name,
-                            current_status=state.status
-                        )
+                return MonitorDecision(
+                    should_monitor=True,
+                    should_query_api=True,
+                    reason=f"已提交恢复 ({state.recovery_time})，继续监控是否再次失败",
+                    workflow_code=workflow_code,
+                    workflow_name=state.workflow_name,
+                    current_status=state.status
+                )
 
             # 3. 本周期已失败 -> 始终持续监控，不受执行窗口限制
             # 必须在执行窗口检查之前判断，确保失败的工作流在窗口外也能被持续跟踪

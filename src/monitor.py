@@ -441,6 +441,15 @@ class WorkflowMonitor:
             # 记录到统计
             self.stats.workflow_failure_stats[project_name][wf_name] = len(instances)
 
+            # 更新调度追踪器：标记工作流为失败状态
+            # 确保失败的工作流在执行窗口外也能被持续监控
+            if self.enable_schedule_optimization and instances:
+                self.schedule_tracker.mark_failed(
+                    project_code=project_code,
+                    workflow_code=def_code,
+                    instance_id=instances[0].id
+                )
+
         # ============================================================
         # 阈值判断：针对每个工作流定义，独立检查失败实例数量
         # ============================================================
@@ -561,7 +570,7 @@ class WorkflowMonitor:
                 if result.recovery_success:
                     self.stats.successful_recoveries += 1
 
-                    # 更新调度追踪器状态
+                    # 恢复命令已成功提交，更新调度追踪器为 RECOVERED
                     if self.enable_schedule_optimization:
                         self.schedule_tracker.mark_recovered(
                             project_code=project_code,
@@ -576,15 +585,9 @@ class WorkflowMonitor:
                             project_name=monitored.config.name
                         )
                         self.notification_manager.send(message)
-                        self.logger.debug(f"已发送恢复成功通知: {instance.name}")
+                        self.logger.debug(f"已发送恢复已提交通知: {instance.name}")
                 else:
-                    # 更新调度追踪器状态（恢复失败，继续监控）
-                    if self.enable_schedule_optimization:
-                        self.schedule_tracker.mark_failed(
-                            project_code=project_code,
-                            workflow_code=instance.process_definition_code,
-                            instance_id=instance.id
-                        )
+                    # 调度追踪器已在失败检测阶段标记为 FAILED，无需重复更新
 
                     # 发送恢复失败通知
                     if self.notification_manager.has_notifiers():
