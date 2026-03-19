@@ -5,25 +5,23 @@
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from threading import RLock
 from enum import Enum
 
-from .cron_parser import CronParser, SchedulePeriod
+from .cron_parser import CronParser
 from .logger import get_logger
 
 
 class WorkflowPeriodStatus(Enum):
     """工作流周期状态"""
-    PENDING = "pending"           # 等待执行（调度时间未到）
-    WAITING = "waiting"           # 等待触发（调度时间已到，等待实例创建）
-    RUNNING = "running"           # 运行中
-    SUCCESS = "success"           # 本周期已成功
-    FAILED = "failed"             # 本周期失败，需要监控
-    RECOVERED = "recovered"       # 已恢复
+    PENDING = "pending"           # 待确认（尚未通过 API 确认结果）
+    SUCCESS = "success"           # 本周期已确认成功
+    FAILED = "failed"             # 本周期失败，需要持续监控
+    RECOVERED = "recovered"       # 已提交恢复
 
 
 @dataclass
@@ -83,21 +81,15 @@ class ScheduleTracker:
 
     def __init__(
         self,
-        state_file: str = "data/schedule_state.json",
-        execution_window_hours: int = 4,
-        success_cooldown_minutes: int = 30
+        state_file: str = "data/schedule_state.json"
     ):
         """
         初始化追踪器
 
         Args:
             state_file: 状态文件路径
-            execution_window_hours: 执行窗口时长（小时）
-            success_cooldown_minutes: 成功后冷却时间（分钟）
         """
         self.state_file = Path(state_file)
-        self.execution_window_hours = execution_window_hours
-        self.success_cooldown_minutes = success_cooldown_minutes
         self.logger = get_logger()
         self._lock = RLock()
 
@@ -194,9 +186,7 @@ class ScheduleTracker:
             state = self._states[key]
             try:
                 parser = CronParser(state.cron_expression)
-                period = parser.get_schedule_period(
-                    execution_window_hours=self.execution_window_hours
-                )
+                period = parser.get_schedule_period()
 
                 # 检查是否进入新周期
                 new_period_start = period.current_start.isoformat()
@@ -312,6 +302,8 @@ class ScheduleTracker:
         """
         做出监控决策
 
+        决策逻辑：本周期已确认成功 → 跳过，其他状态 → 检查
+
         Args:
             project_code: 项目编码
             workflow_code: 工作流编码
@@ -334,29 +326,10 @@ class ScheduleTracker:
 
             state = self._states[key]
 
-            # 更新周期信息
+            # 更新周期信息（检测新周期并重置状态）
             self.update_period(project_code, workflow_code)
 
-            # 获取当前调度周期
-            try:
-                parser = CronParser(state.cron_expression)
-                period = parser.get_schedule_period(
-                    execution_window_hours=self.execution_window_hours
-                )
-            except Exception as e:
-                return MonitorDecision(
-                    should_monitor=True,
-                    should_query_api=True,
-                    reason=f"Cron 解析失败: {e}，执行完整监控",
-                    workflow_code=workflow_code,
-                    workflow_name=state.workflow_name,
-                    current_status=state.status
-                )
-
-            now = datetime.now()
-
-            # 决策逻辑
-            # 1. 本周期已成功 -> 跳过
+            # 本周期已确认成功 -> 跳过，直到下个周期重置为 PENDING
             if state.status == WorkflowPeriodStatus.SUCCESS.value:
                 return MonitorDecision(
                     should_monitor=False,
@@ -367,45 +340,11 @@ class ScheduleTracker:
                     current_status=state.status
                 )
 
-            # 2. 本周期已恢复 -> 仍需监控（恢复后可能再次失败）
-            if state.status == WorkflowPeriodStatus.RECOVERED.value:
-                return MonitorDecision(
-                    should_monitor=True,
-                    should_query_api=True,
-                    reason=f"已提交恢复 ({state.recovery_time})，继续监控是否再次失败",
-                    workflow_code=workflow_code,
-                    workflow_name=state.workflow_name,
-                    current_status=state.status
-                )
-
-            # 3. 本周期已失败 -> 始终持续监控，不受执行窗口限制
-            # 必须在执行窗口检查之前判断，确保失败的工作流在窗口外也能被持续跟踪
-            if state.status == WorkflowPeriodStatus.FAILED.value:
-                return MonitorDecision(
-                    should_monitor=True,
-                    should_query_api=True,
-                    reason="本周期失败，持续监控直到恢复",
-                    workflow_code=workflow_code,
-                    workflow_name=state.workflow_name,
-                    current_status=state.status
-                )
-
-            # 4. 不在执行窗口内 -> 跳过
-            if not period.is_in_execution_window:
-                return MonitorDecision(
-                    should_monitor=False,
-                    should_query_api=False,
-                    reason=f"不在执行窗口内，下次调度: {period.next_start.strftime('%Y-%m-%d %H:%M')}",
-                    workflow_code=workflow_code,
-                    workflow_name=state.workflow_name,
-                    current_status=state.status
-                )
-
-            # 5. 在执行窗口内，状态待定 -> 需要查询
+            # 其他状态（PENDING/FAILED/RECOVERED）-> 需要查询 API
             return MonitorDecision(
                 should_monitor=True,
                 should_query_api=True,
-                reason="在执行窗口内，检查工作流状态",
+                reason=f"当前状态: {state.status}，需要检查",
                 workflow_code=workflow_code,
                 workflow_name=state.workflow_name,
                 current_status=state.status
@@ -467,8 +406,6 @@ class ScheduleTracker:
             return {
                 'total_workflows': total,
                 'by_status': by_status,
-                'execution_window_hours': self.execution_window_hours,
-                'success_cooldown_minutes': self.success_cooldown_minutes
             }
 
     def print_stats(self) -> None:
@@ -477,8 +414,6 @@ class ScheduleTracker:
         self.logger.info("=" * 50)
         self.logger.info("调度追踪统计:")
         self.logger.info(f"  追踪工作流数: {stats['total_workflows']}")
-        self.logger.info(f"  执行窗口: {stats['execution_window_hours']} 小时")
-        self.logger.info(f"  成功冷却: {stats['success_cooldown_minutes']} 分钟")
         if stats['by_status']:
             self.logger.info("  状态分布:")
             for status, count in stats['by_status'].items():

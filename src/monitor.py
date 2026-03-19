@@ -91,9 +91,7 @@ class WorkflowMonitor:
 
         # 初始化调度状态追踪器
         self.schedule_tracker = ScheduleTracker(
-            state_file="data/schedule_state.json",
-            execution_window_hours=getattr(config.monitor, 'execution_window_hours', 4),
-            success_cooldown_minutes=getattr(config.monitor, 'success_cooldown_minutes', 30)
+            state_file="data/schedule_state.json"
         )
         self.enable_schedule_optimization = getattr(
             config.monitor, 'enable_schedule_optimization', True
@@ -379,6 +377,30 @@ class WorkflowMonitor:
                 self.logger.debug(
                     f"项目 {monitored.config.name} 过滤后: {len(failed_instances)} 个失败实例"
                 )
+
+            # 查询成功实例，用于确认工作流本周期已成功完成
+            # 只有 API 确认存在 SUCCESS 实例才标记为成功，
+            # "没查到 FAILURE" 不等于成功（可能还在 RUNNING）
+            if self.enable_schedule_optimization:
+                failed_codes = {wf.process_definition_code for wf in failed_instances}
+                # 找出无失败的工作流，进一步确认是否已成功
+                non_failed_codes = [
+                    wf_code for wf_code in workflows_to_check
+                    if wf_code not in failed_codes
+                ]
+                if non_failed_codes:
+                    all_success_instances = self.client.get_success_workflow_instances(project_code)
+                    success_codes = {
+                        wf.process_definition_code for wf in all_success_instances
+                        if self._is_within_time_window(wf, self.config.monitor.time_window_hours)
+                    }
+                    for wf_code in non_failed_codes:
+                        if wf_code in success_codes:
+                            self.schedule_tracker.mark_success(
+                                project_code=project_code,
+                                workflow_code=wf_code,
+                                instance_id=0
+                            )
 
         if not failed_instances:
             self.logger.debug(f"项目 {monitored.config.name} 中没有失败的工作流")

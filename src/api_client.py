@@ -552,6 +552,27 @@ class DolphinSchedulerClient:
             state_type='FAILURE'
         )
 
+    def get_success_workflow_instances(
+        self,
+        project_code: int,
+        process_definition_code: Optional[int] = None
+    ) -> List[WorkflowInstance]:
+        """
+        获取成功的工作流实例
+
+        Args:
+            project_code: 项目编码
+            process_definition_code: 工作流定义编码（可选）
+
+        Returns:
+            成功的工作流实例列表
+        """
+        return self.get_workflow_instances(
+            project_code=project_code,
+            process_definition_code=process_definition_code,
+            state_type='SUCCESS'
+        )
+
     def get_task_instances(
         self,
         project_code: int,
