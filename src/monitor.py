@@ -493,20 +493,36 @@ class WorkflowMonitor:
             # 提取工作流名称
             wf_name = self._extract_workflow_name(instances[0].name) if instances else "未知"
 
-            # 判断该工作流定义的失败实例数量是否超过阈值
-            failure_count = len(instances)  # 该工作流定义的失败实例数量
+            # 阈值计算前，排除已耗尽恢复次数的实例
+            # 这些实例已无法恢复，不应影响新实例的恢复判断
+            active_instances = []
+            exhausted_instances = []
+            for inst in instances:
+                record = self.recovery_handler.get_recovery_record(inst)
+                if record and record.attempt_count >= self.config.retry.max_recovery_attempts:
+                    exhausted_instances.append(inst)
+                else:
+                    active_instances.append(inst)
+
+            if exhausted_instances:
+                self.logger.debug(
+                    f"工作流 [{wf_name}] 排除 {len(exhausted_instances)} 个已耗尽恢复次数的实例"
+                )
+
+            # 判断该工作流定义的活跃失败实例数量是否超过阈值
+            failure_count = len(active_instances)
 
             if failure_count > max_failures_threshold:
                 # 超过阈值：该工作流短时间内多次失败，只通知不恢复
-                workflows_to_notify_only.extend(instances)
-                self.stats.skipped_due_to_threshold += len(instances)
+                workflows_to_notify_only.extend(active_instances)
+                self.stats.skipped_due_to_threshold += len(active_instances)
                 self.logger.warning(
                     f"⚠️  工作流 [{wf_name}] 在 {time_window_hours} 小时内有 {failure_count} 个实例失败，"
                     f"超过阈值({max_failures_threshold}个)，只通知不恢复"
                 )
 
                 # 发送超过阈值通知（带限流控制）
-                if instances and self.notification_manager.has_notifiers():
+                if active_instances and self.notification_manager.has_notifiers():
                     # 检查是否可以发送通知（24小时内最多6次）
                     if self.notification_rate_limiter.can_notify(
                         project_name=monitored.config.name,
@@ -514,7 +530,7 @@ class WorkflowMonitor:
                         workflow_name=wf_name
                     ):
                         message = build_threshold_exceeded_message(
-                            workflow=instances[0],
+                            workflow=active_instances[0],
                             project_name=monitored.config.name,
                             failure_count=failure_count,
                             threshold=max_failures_threshold,
@@ -546,9 +562,9 @@ class WorkflowMonitor:
                             f"工作流 [{wf_name}] 在24小时内已发送 {count} 次通知，"
                             f"达到上限(6次)，已跳过本次通知"
                         )
-            else:
+            elif active_instances:
                 # 未超过阈值：可以尝试自动恢复
-                workflows_to_recover.extend(instances)
+                workflows_to_recover.extend(active_instances)
                 self.logger.debug(
                     f"工作流 [{wf_name}] 失败 {failure_count} 个实例，"
                     f"未超过阈值({max_failures_threshold})，将尝试恢复"
@@ -568,12 +584,47 @@ class WorkflowMonitor:
                     self._on_failure_detected(instance)
 
         # 处理未超过阈值的失败工作流
-        if workflows_to_recover:
+        # 先过滤掉已耗尽恢复次数的实例，避免每个检查周期重复处理和告警
+        actionable = []
+        for instance in workflows_to_recover:
+            record = self.recovery_handler.get_recovery_record(instance)
+            if record and record.attempt_count >= self.config.retry.max_recovery_attempts:
+                # 首次检测到耗尽：发送一次通知，后续不再重复
+                if not record.exhausted_notified:
+                    record.exhausted_notified = True
+                    self.recovery_handler.save_state()
+                    self.logger.warning(
+                        f"工作流 {instance.name} 自动恢复次数已达上限 "
+                        f"({record.attempt_count}/{self.config.retry.max_recovery_attempts})，"
+                        f"请人工介入"
+                    )
+                    if self.notification_manager.has_notifiers():
+                        message = build_recovery_failed_message(
+                            result=RecoveryResult(
+                                workflow_instance=instance,
+                                validation_result=None,
+                                recovery_executed=False,
+                                recovery_success=False,
+                                message=f"自动恢复次数已达上限 ({record.attempt_count}/{self.config.retry.max_recovery_attempts})，请人工介入",
+                                attempt_count=record.attempt_count
+                            ),
+                            project_name=monitored.config.name
+                        )
+                        self.notification_manager.send(message)
+                else:
+                    self.logger.debug(
+                        f"跳过已耗尽恢复次数的工作流: {instance.name} "
+                        f"({record.attempt_count}/{self.config.retry.max_recovery_attempts})"
+                    )
+                continue
+            actionable.append(instance)
+
+        if actionable:
             self.logger.info(
-                f"将尝试恢复 {len(workflows_to_recover)} 个工作流实例"
+                f"将尝试恢复 {len(actionable)} 个工作流实例"
             )
 
-        for instance in workflows_to_recover:
+        for instance in actionable:
             # 触发失败检测回调（保留旧的回调接口）
             if self._on_failure_detected:
                 self._on_failure_detected(instance)

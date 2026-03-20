@@ -30,6 +30,7 @@ class RecoveryRecord:
     attempt_count: int = 0
     last_attempt_time: Optional[str] = None
     recovery_history: List[Dict] = field(default_factory=list)
+    exhausted_notified: bool = False  # 是否已发送过恢复次数耗尽通知
 
     def add_attempt(self, success: bool, message: str) -> None:
         """添加恢复尝试记录"""
@@ -100,13 +101,14 @@ class RecoveryHandler:
                             project_code=value['project_code'],
                             attempt_count=value.get('attempt_count', 0),
                             last_attempt_time=value.get('last_attempt_time'),
-                            recovery_history=value.get('recovery_history', [])
+                            recovery_history=value.get('recovery_history', []),
+                            exhausted_notified=value.get('exhausted_notified', False)
                         )
                 self.logger.debug(f"加载了 {len(self._recovery_records)} 条恢复记录")
             except Exception as e:
                 self.logger.warning(f"加载恢复状态失败: {e}")
 
-    def _save_state(self) -> None:
+    def save_state(self) -> None:
         """保存恢复状态到文件"""
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -118,14 +120,30 @@ class RecoveryHandler:
                     'project_code': record.project_code,
                     'attempt_count': record.attempt_count,
                     'last_attempt_time': record.last_attempt_time,
-                    'recovery_history': record.recovery_history
+                    'recovery_history': record.recovery_history,
+                    'exhausted_notified': record.exhausted_notified
                 }
             with open(self.state_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self.logger.warning(f"保存恢复状态失败: {e}")
 
-    def _get_recovery_record(
+    def get_recovery_record(
+        self,
+        workflow_instance: WorkflowInstance
+    ) -> Optional[RecoveryRecord]:
+        """
+        查询恢复记录（只读，不自动创建）
+
+        Args:
+            workflow_instance: 工作流实例
+
+        Returns:
+            恢复记录，不存在返回 None
+        """
+        return self._recovery_records.get(workflow_instance.id)
+
+    def _get_or_create_recovery_record(
         self,
         workflow_instance: WorkflowInstance
     ) -> RecoveryRecord:
@@ -170,7 +188,7 @@ class RecoveryHandler:
             workflow_instance
         )
 
-        record = self._get_recovery_record(workflow_instance)
+        record = self._get_or_create_recovery_record(workflow_instance)
 
         # 检查是否可以恢复
         if not validation_result.can_recover:
@@ -236,7 +254,7 @@ class RecoveryHandler:
             record.add_attempt(False, message)
 
         # 保存状态
-        self._save_state()
+        self.save_state()
 
         return RecoveryResult(
             workflow_instance=workflow_instance,
@@ -276,7 +294,7 @@ class RecoveryHandler:
         """
         if workflow_instance_id in self._recovery_records:
             del self._recovery_records[workflow_instance_id]
-            self._save_state()
+            self.save_state()
             self.logger.info(f"已清除工作流实例 {workflow_instance_id} 的恢复记录")
             return True
         return False
@@ -290,7 +308,7 @@ class RecoveryHandler:
         """
         count = len(self._recovery_records)
         self._recovery_records.clear()
-        self._save_state()
+        self.save_state()
         self.logger.info(f"已清除所有恢复记录 (共 {count} 条)")
         return count
 

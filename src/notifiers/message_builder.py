@@ -116,8 +116,8 @@ def build_recovery_failed_message(
         ""
     ]
 
-    if result.skip_reason:
-        content_lines.append(f"**跳过原因**: {result.skip_reason}")
+    if getattr(result, 'message', None):
+        content_lines.append(f"**原因**: {result.message}")
 
     content = "\n".join(content_lines)
 
