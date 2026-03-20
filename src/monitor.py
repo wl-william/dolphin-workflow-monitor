@@ -268,9 +268,13 @@ class WorkflowMonitor:
         """
         检查工作流是否在指定时间窗口内
 
+        判断策略：
+        1. 有调度信息时：用调度周期判断（实例启动时间 >= 当前周期起始时间）
+        2. 无调度信息时：回退到固定时间窗口（默认 24 小时）
+
         Args:
             workflow: 工作流实例
-            hours: 时间窗口（小时）
+            hours: 时间窗口（小时），仅在无调度信息时生效
 
         Returns:
             是否在时间窗口内
@@ -281,8 +285,18 @@ class WorkflowMonitor:
         try:
             # 解析启动时间（DolphinScheduler 格式: "2025-12-30 07:09:24"）
             start_time = datetime.strptime(workflow.start_time, "%Y-%m-%d %H:%M:%S")
-            time_threshold = datetime.now() - timedelta(hours=hours)
 
+            # 优先用调度周期判断
+            if self.enable_schedule_optimization:
+                period_start = self.schedule_tracker.get_period_start(
+                    project_code=workflow.project_code,
+                    workflow_code=workflow.process_definition_code
+                )
+                if period_start is not None:
+                    return start_time >= period_start
+
+            # 无调度信息，回退到固定窗口
+            time_threshold = datetime.now() - timedelta(hours=hours)
             return start_time >= time_threshold
         except (ValueError, TypeError) as e:
             self.logger.warning(f"无法解析工作流 {workflow.name} 的启动时间: {workflow.start_time}")

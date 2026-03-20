@@ -394,6 +394,43 @@ class ScheduleTracker:
 
         return to_monitor, list(decisions.values())
 
+    def get_period_start(
+        self,
+        project_code: int,
+        workflow_code: int
+    ) -> Optional[datetime]:
+        """
+        获取工作流当前调度周期的起始时间
+
+        Args:
+            project_code: 项目编码
+            workflow_code: 工作流编码
+
+        Returns:
+            当前周期起始时间，未注册或无法计算时返回 None
+        """
+        key = self._get_key(project_code, workflow_code)
+
+        with self._lock:
+            if key not in self._states:
+                return None
+
+            state = self._states[key]
+
+            # 先尝试更新周期（确保拿到最新的周期边界）
+            try:
+                parser = CronParser(state.cron_expression)
+                period = parser.get_schedule_period()
+                return period.current_start
+            except Exception:
+                # cron 解析失败，尝试用已保存的值
+                if state.current_period_start:
+                    try:
+                        return datetime.fromisoformat(state.current_period_start)
+                    except (ValueError, TypeError):
+                        pass
+                return None
+
     def get_stats(self) -> Dict:
         """获取统计信息"""
         with self._lock:
