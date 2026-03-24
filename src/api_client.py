@@ -531,6 +531,41 @@ class DolphinSchedulerClient:
             for p in records
         ]
 
+    def get_all_workflow_instances(
+        self,
+        project_code: int,
+        process_definition_code: Optional[int] = None,
+        state_type: Optional[str] = None,
+        page_size: int = 100,
+        max_pages: int = 10
+    ) -> List[WorkflowInstance]:
+        """
+        自动分页获取所有工作流实例
+
+        Args:
+            project_code: 项目编码
+            process_definition_code: 工作流定义编码（可选）
+            state_type: 状态过滤（可选）
+            page_size: 每页数量
+            max_pages: 最大页数（防止无限循环）
+
+        Returns:
+            工作流实例列表
+        """
+        all_instances: List[WorkflowInstance] = []
+        for page_no in range(1, max_pages + 1):
+            instances = self.get_workflow_instances(
+                project_code=project_code,
+                process_definition_code=process_definition_code,
+                state_type=state_type,
+                page_no=page_no,
+                page_size=page_size
+            )
+            all_instances.extend(instances)
+            if len(instances) < page_size:
+                break
+        return all_instances
+
     def get_failed_workflow_instances(
         self,
         project_code: int,
@@ -546,7 +581,7 @@ class DolphinSchedulerClient:
         Returns:
             失败的工作流实例列表
         """
-        return self.get_workflow_instances(
+        return self.get_all_workflow_instances(
             project_code=project_code,
             process_definition_code=process_definition_code,
             state_type='FAILURE'
@@ -567,7 +602,7 @@ class DolphinSchedulerClient:
         Returns:
             成功的工作流实例列表
         """
-        return self.get_workflow_instances(
+        return self.get_all_workflow_instances(
             project_code=project_code,
             process_definition_code=process_definition_code,
             state_type='SUCCESS'
