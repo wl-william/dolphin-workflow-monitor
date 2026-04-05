@@ -148,7 +148,12 @@ class WorkflowInstance:
 
     @property
     def is_failed(self) -> bool:
-        """是否失败"""
+        """
+        是否失败
+
+        只检查 FAILURE 状态。STOP（人为停止）、KILL（人为终止）属于主动操作，
+        不视为需要自动恢复的失败。
+        """
         # 支持字符串和整数两种格式
         if isinstance(self.state, str):
             return self.state.upper() == 'FAILURE'
@@ -573,6 +578,8 @@ class DolphinSchedulerClient:
     ) -> List[WorkflowInstance]:
         """
         获取失败的工作流实例
+
+        注意：只查询 FAILURE 状态。STOP、KILL 状态属于人为操作，不纳入自动监控范围。
 
         Args:
             project_code: 项目编码

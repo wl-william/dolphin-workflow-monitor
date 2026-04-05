@@ -302,7 +302,9 @@ class ScheduleTracker:
         """
         做出监控决策
 
-        决策逻辑：本周期已确认成功 → 跳过，其他状态 → 检查
+        决策逻辑：
+        - 本周期已确认成功 → 仍需低频检查（工作流可能被重新触发后失败）
+        - 其他状态 → 正常检查
 
         Args:
             project_code: 项目编码
@@ -329,12 +331,14 @@ class ScheduleTracker:
             # 更新周期信息（检测新周期并重置状态）
             self.update_period(project_code, workflow_code)
 
-            # 本周期已确认成功 -> 跳过，直到下个周期重置为 PENDING
+            # 本周期已确认成功 → 仍然需要查询 API
+            # 原因：工作流可能被手动触发或重新调度，成功后仍可能出现新的失败实例
+            # 跳过监控会导致后续失败实例无法被检测到
             if state.status == WorkflowPeriodStatus.SUCCESS.value:
                 return MonitorDecision(
-                    should_monitor=False,
-                    should_query_api=False,
-                    reason=f"本周期已成功 ({state.success_time})，跳过监控",
+                    should_monitor=True,
+                    should_query_api=True,
+                    reason=f"本周期已成功 ({state.success_time})，继续监控以检测新失败",
                     workflow_code=workflow_code,
                     workflow_name=state.workflow_name,
                     current_status=state.status
